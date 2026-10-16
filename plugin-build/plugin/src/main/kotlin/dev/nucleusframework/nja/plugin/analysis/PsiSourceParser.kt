@@ -347,7 +347,7 @@ class PsiSourceParser {
             when (decl) {
                 is KtNamedFunction -> {
                     if (decl.name?.startsWith("_") == true) continue
-                    parseFunction(decl, scope)?.let { methods.add(it) }
+                    parseFunction(decl, scope)?.let { methods.addAll(it.withDefaultOverloads()) }
                 }
                 is KtProperty -> {
                     val propName = decl.name ?: continue
@@ -358,7 +358,7 @@ class PsiSourceParser {
                     for (cd in decl.declarations) {
                         if (cd.isPrivateOrInternal()) continue
                         when (cd) {
-                            is KtNamedFunction -> parseFunction(cd, scope)?.let { companionMethods.add(it) }
+                            is KtNamedFunction -> parseFunction(cd, scope)?.let { companionMethods.addAll(it.withDefaultOverloads()) }
                             is KtProperty -> parseProperty(cd, scope)?.let { companionProperties.add(it) }
                         }
                     }
@@ -435,17 +435,27 @@ class PsiSourceParser {
             ApiEnumEntry(entryName, args)
         }
 
+    /**
+     * The function and, as for constructors, one overload per trailing parameter with a default value: the app calls
+     * the one it needs, and the JVM applies the façade's defaults.
+     */
+    private fun ApiFunction.withDefaultOverloads(): List<ApiFunction> {
+        val trailingDefaults = params.reversed().takeWhile { it.hasDefault }.size
+        return (0..trailingDefaults).map { drop -> if (drop == 0) this else copy(params = params.dropLast(drop)) }
+    }
+
     private fun parseFunction(fn: KtNamedFunction, scope: RecordingScope): ApiFunction? {
         val name = fn.name ?: return null
         if (name == "init") return null
         val isSuspend = fn.hasModifier(KtTokens.SUSPEND_KEYWORD)
         val isOverride = fn.hasModifier(KtTokens.OVERRIDE_KEYWORD)
-        val params = fn.valueParameters.mapNotNull { param ->
-            val pName = param.name ?: return@mapNotNull null
-            val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
-            ApiParam(pName, type)
+        // Left out when a parameter or the result can't cross the bridge
+        val params = fn.valueParameters.map { param ->
+            val pName = param.name ?: return null
+            val type = resolveType(param.typeReference, scope) ?: return null
+            ApiParam(pName, type, hasDefault = param.hasDefaultValue())
         }
-        val returnType = fn.typeReference?.let { resolveType(it, scope) } ?: ApiType.UNIT
+        val returnType = fn.typeReference?.let { resolveType(it, scope) ?: return null } ?: ApiType.UNIT
 
         // Extension function detection
         val receiverTypeRef = fn.receiverTypeReference
