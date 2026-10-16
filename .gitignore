@@ -1,0 +1,9 @@
+.jdk-mobile/
+build/
+.gradle/
+.kotlin/
+local.properties
+*.iml
+.idea/
+.DS_Store
+*.log

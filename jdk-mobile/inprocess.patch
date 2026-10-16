@@ -1,0 +1,82 @@
+diff --git a/src/hotspot/os/posix/os_posix.cpp b/src/hotspot/os/posix/os_posix.cpp
+index 91a881b..f5def7e 100644
+--- a/src/hotspot/os/posix/os_posix.cpp
++++ b/src/hotspot/os/posix/os_posix.cpp
+@@ -820,8 +820,33 @@ size_t os::reserve_memory_limit() {
+   return SIZE_MAX;
+ }
+ 
++#ifdef __ANDROID__
++// Embedded in an app process (ART's), the VM and the JDK's natives live in a shared library loaded
++// RTLD_LOCAL: the process' own handle (app_process and its dependencies) can't see them, this library's can
++static void* android_self_handle() {
++  static void* handle = nullptr;
++  if (handle == nullptr) {
++    Dl_info info;
++    if (::dladdr((void*)&android_self_handle, &info) != 0 && info.dli_fname != nullptr) {
++      handle = ::dlopen(info.dli_fname, RTLD_NOLOAD | RTLD_LAZY);
++      // Loaded from the APK itself (base.apk!/lib/<abi>/lib....so), the path doesn't open: the name does
++      const char* name = ::strrchr(info.dli_fname, '/');
++      if (handle == nullptr && name != nullptr) {
++        handle = ::dlopen(name + 1, RTLD_NOLOAD | RTLD_LAZY);
++      }
++    }
++    if (handle == nullptr) {
++      handle = ::dlopen(nullptr, RTLD_LAZY);
++    }
++  }
++  return handle;
++}
++#endif
++
+ void* os::get_default_process_handle() {
+-#ifdef __APPLE__
++#ifdef __ANDROID__
++  return android_self_handle();
++#elif defined(__APPLE__)
+   // MacOS X needs to use RTLD_FIRST instead of RTLD_LAZY
+   // to avoid finding unexpected symbols on second (or later)
+   // loads of a library.
+@@ -883,6 +908,13 @@ void os::dll_unload(void *lib) {
+ }
+ 
+ void* os::lookup_function(const char* name) {
++#ifdef __ANDROID__
++  // The VM's own symbols first (see android_self_handle), then the process'
++  void* self = ::dlsym(android_self_handle(), name);
++  if (self != nullptr) {
++    return self;
++  }
++#endif
+   // This returns the global symbol in the main executable and its dependencies,
+   // as well as shared objects dynamically loaded with RTLD_GLOBAL flag.
+   return dlsym(RTLD_DEFAULT, name);
+diff --git a/src/java.base/unix/native/libjava/jni_util_md.c b/src/java.base/unix/native/libjava/jni_util_md.c
+index 5630d60..b99f0f1 100644
+--- a/src/java.base/unix/native/libjava/jni_util_md.c
++++ b/src/java.base/unix/native/libjava/jni_util_md.c
+@@ -47,7 +47,23 @@ void* getProcessHandle() {
+     if (procHandle != NULL) {
+         return procHandle;
+     }
+-#ifdef __APPLE__
++#if defined(__ANDROID__)
++    /* The library holding the JDK's natives, loaded RTLD_LOCAL in an app's process (see os_posix.cpp) */
++    {
++        Dl_info info;
++        if (dladdr((void*)&getProcessHandle, &info) != 0 && info.dli_fname != NULL) {
++            const char* name = strrchr(info.dli_fname, '/');
++            procHandle = dlopen(info.dli_fname, RTLD_NOLOAD | RTLD_LAZY);
++            /* Loaded from the APK itself (base.apk!/lib/<abi>/lib....so), the path doesn't open: the name does */
++            if (procHandle == NULL && name != NULL) {
++                procHandle = dlopen(name + 1, RTLD_NOLOAD | RTLD_LAZY);
++            }
++        }
++    }
++    if (procHandle == NULL) {
++        procHandle = (void*)dlopen(NULL, RTLD_LAZY);
++    }
++#elif defined(__APPLE__)
+     procHandle = (void*)dlopen(NULL, RTLD_FIRST);
+ #else
+     procHandle = (void*)dlopen(NULL, RTLD_LAZY);

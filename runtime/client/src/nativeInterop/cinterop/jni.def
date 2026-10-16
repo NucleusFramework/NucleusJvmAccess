@@ -1,0 +1,30 @@
+# JNI (the JVM's invocation API and JNIEnv), from jdk-mobile's headers. The JVM itself (libjvm.a and the JDK's
+# natives) is linked into the app's binary by the NJA Gradle plugin.
+package = dev.nucleusframework.nja.jni
+headers = jni.h
+headerFilter = jni.h jni_md.h
+noStringConversion = NewStringUTF GetStringUTFChars
+
+---
+
+/*
+ * A thread attached to the JVM detaches when it ends. Not from a pthread key destructor: Darwin frees the threads'
+ * thread_local storage before those run, HotSpot's current thread with it. _tlv_atexit (what C++ thread_local
+ * destructors use) runs while it is still there. No Kotlin runs at that point: plain C.
+ */
+extern void _tlv_atexit(void (*function)(void*), void* argument);
+
+static void nja_detach(void* vm) {
+    JavaVM* jvm = (JavaVM*)vm;
+    (*jvm)->DetachCurrentThread(jvm);
+}
+
+/* Attaches the calling thread as a daemon, detached automatically when it exits; returns its JNIEnv or NULL */
+static JNIEnv* nja_attach_current_thread(JavaVM* vm, const char* name) {
+    JNIEnv* env = NULL;
+    if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_21) == JNI_OK) return env;
+    JavaVMAttachArgs args = {JNI_VERSION_21, (char*)name, NULL};
+    if ((*vm)->AttachCurrentThreadAsDaemon(vm, (void**)&env, &args) != JNI_OK) return NULL;
+    _tlv_atexit(nja_detach, vm);
+    return env;
+}
