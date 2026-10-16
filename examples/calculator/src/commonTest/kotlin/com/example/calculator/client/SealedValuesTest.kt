@@ -41,6 +41,14 @@ class SealedValuesTest {
     }
 
     @Test
+    fun `default arguments`() {
+        val rect = Figure.Rect(2.0, 3.0)
+        assertEquals("6.0 u²", geometry.describe(rect))
+        assertEquals("6.000 u²", geometry.describe(rect, 3))
+        assertEquals("6 m²", geometry.describe(rect, 0, "m²"))
+    }
+
+    @Test
     fun `a sealed class`() {
         assertEquals(5L, geometry.eval(Op.Add(2, 3)))
         assertEquals(10L, geometry.eval(Op.Sum(longArrayOf(1, 2, 3, 4))))

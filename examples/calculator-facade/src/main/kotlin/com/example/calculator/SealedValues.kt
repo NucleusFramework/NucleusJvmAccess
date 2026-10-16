@@ -55,4 +55,7 @@ class Geometry {
     }
 
     fun viaApp(shape: Figure, transform: (Figure) -> Figure): Figure = transform(shape)
+
+    /** Default arguments: the app may leave out the trailing ones, the JVM fills them in. */
+    fun describe(shape: Figure, decimals: Int = 1, unit: String = "u²"): String = String.format(java.util.Locale.ROOT, "%.${decimals}f %s", area(shape), unit)
 }
