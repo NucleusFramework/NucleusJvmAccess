@@ -13,6 +13,7 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.work.DisableCachingByDefault
 import org.gradle.process.ExecOperations
 import java.io.File
 import javax.inject.Inject
@@ -21,6 +22,7 @@ import javax.inject.Inject
  * Links `libnja.so` for each ABI: HotSpot and the JDK's natives (jdk-mobile's static archives) with the bridge to
  * ART (nja_android.c), into a shared library ART loads RTLD_LOCAL, bound to its own symbols.
  */
+@DisableCachingByDefault(because = "Links with the local NDK")
 abstract class NjaAndroidLinkTask : DefaultTask() {
     @get:Inject abstract val exec: ExecOperations
 

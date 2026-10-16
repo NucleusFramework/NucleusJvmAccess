@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.kmp.library)
+    alias(libs.plugins.vanniktech.publish)
 }
 
 kotlin {
@@ -27,5 +28,36 @@ kotlin {
         commonMain.dependencies {
             api(libs.kotlinx.coroutines.core)
         }
+    }
+}
+
+mavenPublishing {
+    coordinates("dev.nucleusframework.nja", project.name, project.version.toString())
+    pom {
+        name.set("Nucleus JVM Access client")
+        description.set("The part of Nucleus JVM Access running in the app (Android, iOS): starts the JVM and calls the façades")
+        url.set("https://github.com/NucleusFramework/NucleusJvmAccess")
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://opensource.org/licenses/MIT")
+            }
+        }
+        developers {
+            developer {
+                id.set("nucleusframework")
+                name.set("NucleusFramework")
+                url.set("https://github.com/NucleusFramework")
+            }
+        }
+        scm {
+            url.set("https://github.com/NucleusFramework/NucleusJvmAccess")
+            connection.set("scm:git:git://github.com/NucleusFramework/NucleusJvmAccess.git")
+            developerConnection.set("scm:git:ssh://git@github.com/NucleusFramework/NucleusJvmAccess.git")
+        }
+    }
+    publishToMavenCentral()
+    if (project.hasProperty("signingInMemoryKey")) {
+        signAllPublications()
     }
 }

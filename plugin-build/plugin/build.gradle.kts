@@ -1,9 +1,12 @@
 plugins {
     `kotlin-dsl`
+    alias(libs.plugins.plugin.publish)
 }
 
 group = "dev.nucleusframework.nja"
-version = "0.1.0-SNAPSHOT"
+// A release's version is its tag's (v0.1.0 -> 0.1.0), the runtimes' too: the plugin adds them at its own version
+version = providers.environmentVariable("GITHUB_REF").orNull?.takeIf { it.startsWith("refs/tags/v") }
+    ?.removePrefix("refs/tags/v") ?: "0.1.0-SNAPSHOT"
 
 dependencies {
     // kotlin-compiler-embeddable for PSI parsing (compileOnly: loaded at run time in an isolated worker classloader)
@@ -37,22 +40,37 @@ val generateVersion by tasks.registering {
 kotlin.sourceSets.main { kotlin.srcDir(generateVersion) }
 
 gradlePlugin {
+    website.set("https://github.com/NucleusFramework/NucleusJvmAccess")
+    vcsUrl.set("https://github.com/NucleusFramework/NucleusJvmAccess")
     plugins {
         create("nja") {
             id = "dev.nucleusframework.nja"
             implementationClass = "dev.nucleusframework.nja.plugin.NjaPlugin"
             displayName = "Nucleus JVM Access"
             description = "Use Java libraries from Kotlin Multiplatform iOS and Android apps, on a real JVM in the app's process"
+            tags.set(listOf("kotlin", "multiplatform", "kmp", "jvm", "android", "ios", "java"))
         }
         create("njaFacade") {
             id = "dev.nucleusframework.nja.facade"
             implementationClass = "dev.nucleusframework.nja.plugin.NjaFacadePlugin"
             displayName = "Nucleus JVM Access façade"
             description = "Exports a Kotlin/JVM module's API to Kotlin Multiplatform apps through NJA"
+            tags.set(listOf("kotlin", "multiplatform", "kmp", "jvm", "android", "ios", "java"))
         }
     }
 }
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// The Plugin Portal's credentials, from the CI's environment
+tasks.register("setupPluginUploadFromEnvironment") {
+    doLast {
+        val key = System.getenv("GRADLE_PUBLISH_KEY")
+        val secret = System.getenv("GRADLE_PUBLISH_SECRET")
+        if (key == null || secret == null) throw GradleException("GRADLE_PUBLISH_KEY and GRADLE_PUBLISH_SECRET must be set")
+        System.setProperty("gradle.publish.key", key)
+        System.setProperty("gradle.publish.secret", secret)
+    }
 }

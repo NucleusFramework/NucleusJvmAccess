@@ -68,7 +68,7 @@ class NjaPlugin : Plugin<Project> {
         project.pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
             val kotlin = project.extensions.getByType(KotlinMultiplatformExtension::class.java)
             kotlin.sourceSets.getByName("commonMain").kotlin.srcDir(clientSources.map { it.incoming.files })
-            project.dependencies.add("commonMainApi", "dev.nucleusframework.nja:client:$NJA_VERSION")
+            project.dependencies.add("commonMainApi", "dev.nucleusframework.nja:nja-client:$NJA_VERSION")
             kotlin.targets.withType(KotlinNativeTarget::class.java).configureEach {
                 if (konanTarget.family == Family.IOS) configureIos(project, extension, classPath.get(), this)
             }

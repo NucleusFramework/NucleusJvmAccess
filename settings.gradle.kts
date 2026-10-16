@@ -17,7 +17,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "nucleus-jvm-access"
 
-// The runtimes (dev.nucleusframework.nja:server and :client), substituted for the plugin's dependencies
+// The runtimes (dev.nucleusframework.nja:nja-server and :nja-client), substituted for the plugin's dependencies
 includeBuild("runtime")
 
 include(":examples:calculator-facade")

@@ -12,6 +12,7 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.work.DisableCachingByDefault
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipEntry
@@ -22,6 +23,7 @@ import java.util.zip.ZipOutputStream
  * `jdk/<abi>`, the façades' class path under `classpath/`, the JVM options) and `nja/runtime.id`, its hash, which
  * versions the copy the app extracts.
  */
+@DisableCachingByDefault(because = "Zipping the runtime is cheaper than storing it in the cache")
 abstract class NjaAndroidRuntimeTask : DefaultTask() {
     /** java.home (jdk-mobile's `lib`) by ABI. */
     @get:Input abstract val javaHomes: MapProperty<String, String>

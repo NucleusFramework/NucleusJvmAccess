@@ -30,7 +30,7 @@ class NjaFacadePlugin : Plugin<Project> {
             val psiScope = project.configurations.dependencyScope("njaPsi").get()
             val psiConfiguration = project.configurations.resolvable("njaPsiClasspath") { extendsFrom(psiScope) }
             project.dependencies.add(psiScope.name, "org.jetbrains.kotlin:kotlin-compiler-embeddable:${kotlin.coreLibrariesVersion}")
-            project.dependencies.add("implementation", "dev.nucleusframework.nja:server:$NJA_VERSION")
+            project.dependencies.add("implementation", "dev.nucleusframework.nja:nja-server:$NJA_VERSION")
 
             val main = kotlin.sourceSets.getByName("main")
             // The façade's own sources (not what this plugin generates into the same source set)

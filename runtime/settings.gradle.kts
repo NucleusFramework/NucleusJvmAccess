@@ -20,5 +20,9 @@ dependencyResolutionManagement {
 
 rootProject.name = "nja-runtime"
 
-include(":server")
-include(":client")
+// Named after their artifacts (dev.nucleusframework.nja:nja-server, :nja-client): the plugin adds them by these
+// coordinates, and the composite builds substitute these projects for them
+include(":nja-server")
+project(":nja-server").projectDir = file("server")
+include(":nja-client")
+project(":nja-client").projectDir = file("client")
