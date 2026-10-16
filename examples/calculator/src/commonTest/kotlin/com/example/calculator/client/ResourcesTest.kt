@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 
 class ResourcesTest {
     @Test
-    fun `closing the proxy closes the JVM object, once`() {
+    fun `closing the proxy closes the JVM object once`() {
         val before = Resource.closeCount()
         val resource = Resource("r")
         assertTrue(resource.isOpen())
@@ -27,7 +27,7 @@ class ResourcesTest {
     }
 
     @Test
-    fun `an internal constructor stays the JVM's`() {
+    fun `an internal constructor stays on the JVM`() {
         val ticket = TicketOffice().issue("abc")
         assertEquals("abc", ticket.label)
         assertTrue(ticket.check(21))

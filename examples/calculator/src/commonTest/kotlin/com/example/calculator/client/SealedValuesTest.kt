@@ -33,7 +33,7 @@ class SealedValuesTest {
     }
 
     @Test
-    fun `in a data class, nullable, through a callback`() {
+    fun `in a data class or nullable or through a callback`() {
         assertEquals(12.0, geometry.layerArea(Layer(Figure.Rect(2.0, 3.0), setOf("a", "b"))))
         assertNull(geometry.maybe(false))
         assertEquals(Figure.Rect(2.0, 3.0), geometry.maybe(true))
