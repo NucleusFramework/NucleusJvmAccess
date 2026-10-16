@@ -57,7 +57,7 @@ class ApiModel(val module: ApiModule) {
         }
         for (cls in module.classes) {
             val owner = Owner.Instance(cls.fqName, cls.simpleName)
-            if (!cls.isAbstract && !cls.isSealed) {
+            if (!cls.isAbstract && !cls.isSealed && cls.isConstructible) {
                 val params = cls.constructor.params
                 val trailingDefaults = params.reversed().takeWhile { it.hasDefault }.size
                 for (drop in 0..trailingDefaults) add { Member.Constructor(it, cls, params.dropLast(drop)) }

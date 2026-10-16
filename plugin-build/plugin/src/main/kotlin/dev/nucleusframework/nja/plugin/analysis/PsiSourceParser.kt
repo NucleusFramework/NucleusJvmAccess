@@ -132,7 +132,7 @@ class PsiSourceParser {
 
         fun visit(declarations: List<KtDeclaration>, parentFq: String?) {
             for (decl in declarations) {
-                if (decl !is KtClass) continue
+                if (decl !is KtClass || decl.isPrivateOrInternal()) continue
                 val name = decl.name ?: continue
                 val fq = if (parentFq != null) "$parentFq.$name"
                     else if (pkg.isNotEmpty()) "$pkg.$name" else name
@@ -288,8 +288,8 @@ class PsiSourceParser {
             val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
             ApiParam(pName, type, hasDefault = param.hasDefaultValue())
         }
-        // Constructor val/var params are properties — collect them for getter/setter generation
-        val ctorProperties = rawCtorParams.filter { it.hasValOrVar() }.mapNotNull { param ->
+        // Constructor val/var params are properties — collect them for getter/setter generation (the public ones)
+        val ctorProperties = rawCtorParams.filter { it.hasValOrVar() && !it.isPrivateOrInternal() }.mapNotNull { param ->
             val pName = param.name ?: return@mapNotNull null
             val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
             ApiProperty(pName, type, param.isMutable)
@@ -370,6 +370,7 @@ class PsiSourceParser {
             isOpen = isOpen, isAbstract = isAbstract, isSealed = isSealed,
             superClass = superClass, interfaces = implementedInterfaces, sealedSubclasses = sealedSubclasses,
             isCommon = isCommon,
+            isConstructible = ktClass.primaryConstructor?.isPrivateOrInternal() != true && ctorParams.size == rawCtorParams.size,
         )
     }
 

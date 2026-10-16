@@ -206,6 +206,18 @@ class ClientGenerator(private val model: ApiModel, private val libName: String, 
     private fun StringBuilder.appendFunction(fn: ApiFunction, member: Member, indent: String, receiver: String?, modifiers: String) {
         val params = fn.params.joinToString(", ") { "${esc(it.name)}: ${model.clientType(it.type)}" }
         val returnType = fn.returnType
+        // close() (an AutoCloseable's): the JVM object's own, then the proxy's, which releases it; once
+        if (receiver != null && fn.name == "close" && fn.params.isEmpty() && returnType == ApiType.UNIT && !fn.isSuspend && !fn.isExtension) {
+            appendLine("${indent}override fun close() {")
+            appendLine("$indent    if (njaRef.isClosed) return")
+            appendLine("$indent    try {")
+            appendLine("$indent        $receiver.use { njaH -> NjaRuntime.call($module, ${member.id}, { njaW, njaS -> njaW.writeLong(njaH) }) { _, _ -> } }")
+            appendLine("$indent    } finally {")
+            appendLine("$indent        super.close()")
+            appendLine("$indent    }")
+            appendLine("$indent}")
+            return
+        }
         val extension = if (fn.isExtension) "${model.clientType(fn.receiverType!!)}." else ""
         val head = "$indent$modifiers${if (fn.isSuspend) "suspend " else ""}fun $extension${esc(fn.name)}($params): ${model.clientType(returnType)}"
         val leading = buildList {

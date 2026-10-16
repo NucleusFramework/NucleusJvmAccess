@@ -73,6 +73,8 @@ data class ApiClass(
     val interfaces: List<String> = emptyList(),
     val sealedSubclasses: List<String> = emptyList(),
     val isCommon: Boolean = false,
+    /** Whether the app may construct it: a public constructor whose parameters all cross the bridge. */
+    val isConstructible: Boolean = true,
 ) : Serializable
 
 data class ApiEnumEntry(
