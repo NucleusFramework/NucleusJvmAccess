@@ -5,9 +5,7 @@
 > on can change at any time, and it may not be maintained. Don't depend on it for production apps.
 
 Use **Java libraries from Kotlin Multiplatform iOS and Android apps, on a real JVM** — [jdk-mobile](https://github.com/NucleusFramework/openjdk-mobile)'s
-OpenJDK 27 — running **in the app's own process**. The other way round from
-[Nucleus Native Access](https://github.com/NucleusFramework/NucleusNativeAccess): there, Kotlin/Native code used from the
-JVM; here, JVM code used from Kotlin Multiplatform, with the same programming model.
+OpenJDK 27 — running **in the app's own process**.
 
 ```
 Façade (Kotlin/JVM, Java 25)         The plugin generates                  The app (commonMain) sees
@@ -100,7 +98,7 @@ Kotlin binaries (`-force_load` of jdk-mobile's static libraries, `-export_dynami
 
 ## What crosses the bridge
 
-The façade's public API, parsed from its sources with Kotlin PSI (NNA's parser), with NNA's type matrix: `Int`,
+The façade's public API, parsed from its sources with Kotlin PSI: `Int`,
 `Long`, `Double`, `Float`, `Boolean`, `Byte`, `Short`, `String` (length-prefixed UTF-8: NUL included), `ByteArray`,
 enums (verbatim, bodies included), data classes (verbatim), classes (proxies, `AutoCloseable`, released on `close()` or
 when collected), open/abstract/sealed classes and interfaces (hierarchy mirrored, objects wrapped in their most specific
@@ -115,13 +113,12 @@ object once the calls using it are done (receiver *and* arguments are leased).
 
 ## Tests
 
-`examples/calculator` runs **NNA's whole test suite** (its 46 files, 1,977 tests: types, callbacks, suspend, flows,
-inheritance, load, concurrency, monkey and torture tests) against NNA's calculator example as a JVM façade — on iOS
-and on Android, from `commonTest` — plus NJA's own torture suite (`NjaTortureTest`): JVM null checks and stack
-overflows on 16 threads while the app faults and collects, JIT deoptimization storms, 300-level JVM ↔ app nesting,
-callbacks invoked from the wrong JVM thread, thread churn (1,000 threads, no JVM thread leak), 24–48 MB payloads,
-100k handles released by close and by collection, cancellation storms, 200k-element flows, a 20 s chaos soak on 24
-threads.
+`examples/calculator` runs a suite of 1,977 tests (types, callbacks, suspend, flows, inheritance, load, concurrency,
+monkey and torture tests) against a calculator façade, on iOS and on Android, from `commonTest`, plus NJA's own
+torture suite (`NjaTortureTest`): JVM null checks and stack overflows on 16 threads while the app faults and
+collects, JIT deoptimization storms, 300-level JVM ↔ app nesting, callbacks invoked from the wrong JVM thread, thread
+churn (1,000 threads, no JVM thread leak), 24–48 MB payloads, 100k handles released by close and by collection,
+cancellation storms, 200k-element flows, a 20 s chaos soak on 24 threads.
 
 ```bash
 ./gradlew :examples:calculator:iosSimulatorArm64Test
@@ -130,10 +127,6 @@ threads.
 ```bash
 ./gradlew :examples:calculator:connectedAndroidDeviceTest
 ```
-
-The suites needed only the edits a different runtime implies: JVM-only APIs replaced by common stand-ins
-(`TortureSupport.kt`), test names restricted to what Kotlin/Native and DEX accept, `KotlinNativeException` →
-`JvmException`, and three assertions that encoded NNA's limits or a race of the test itself (documented in place).
 
 ## Performance
 
@@ -157,9 +150,9 @@ It downloads the four runtimes, checks their SHA-256 and lays them out. The patc
 
 ## Layout
 
-- `plugin-build/` — the Gradle plugins (`dev.nucleusframework.nja.facade`, `dev.nucleusframework.nja`): PSI analysis
-  (from NNA), member table, server and client generators, Android linking/packaging, iOS linking/bundling.
+- `plugin-build/` — the Gradle plugins (`dev.nucleusframework.nja.facade`, `dev.nucleusframework.nja`): PSI analysis,
+  member table, server and client generators, Android linking/packaging, iOS linking/bundling.
 - `runtime/server` — runs in the mobile JVM: dispatch, handles, async (suspend/Flow), the Android and iOS links.
 - `runtime/client` — KMP: codec, call scopes and leases, proxies' base, async, the Android and iOS transports.
 - `runtime/android-native` — the ART ↔ HotSpot bridge (C).
-- `examples/` — `calculator` (NNA's suites), `torture-facade`, `benchmark*`.
+- `examples/` — `calculator` (the test suites), `torture-facade`, `benchmark*`.

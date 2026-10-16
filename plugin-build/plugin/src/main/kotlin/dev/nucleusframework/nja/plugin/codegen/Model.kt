@@ -1,12 +1,12 @@
 package dev.nucleusframework.nja.plugin.codegen
 
-import dev.nucleusframework.nja.plugin.ir.KneClass
-import dev.nucleusframework.nja.plugin.ir.KneFunction
-import dev.nucleusframework.nja.plugin.ir.KneInterface
-import dev.nucleusframework.nja.plugin.ir.KneModule
-import dev.nucleusframework.nja.plugin.ir.KneParam
-import dev.nucleusframework.nja.plugin.ir.KneProperty
-import dev.nucleusframework.nja.plugin.ir.KneType
+import dev.nucleusframework.nja.plugin.ir.ApiClass
+import dev.nucleusframework.nja.plugin.ir.ApiFunction
+import dev.nucleusframework.nja.plugin.ir.ApiInterface
+import dev.nucleusframework.nja.plugin.ir.ApiModule
+import dev.nucleusframework.nja.plugin.ir.ApiParam
+import dev.nucleusframework.nja.plugin.ir.ApiProperty
+import dev.nucleusframework.nja.plugin.ir.ApiType
 
 /** Who a member belongs to: what the call passes before the arguments, and how the JVM side reaches it. */
 sealed class Owner {
@@ -24,17 +24,17 @@ sealed class Owner {
 sealed class Member {
     abstract val id: Int
 
-    data class Constructor(override val id: Int, val cls: KneClass, val params: List<KneParam>) : Member()
-    data class Function(override val id: Int, val owner: Owner, val fn: KneFunction) : Member()
-    data class Getter(override val id: Int, val owner: Owner, val property: KneProperty) : Member()
-    data class Setter(override val id: Int, val owner: Owner, val property: KneProperty) : Member()
+    data class Constructor(override val id: Int, val cls: ApiClass, val params: List<ApiParam>) : Member()
+    data class Function(override val id: Int, val owner: Owner, val fn: ApiFunction) : Member()
+    data class Getter(override val id: Int, val owner: Owner, val property: ApiProperty) : Member()
+    data class Setter(override val id: Int, val owner: Owner, val property: ApiProperty) : Member()
 
     /** Invokes a JVM lambda the app holds (one the façade returned). */
-    data class Invoke(override val id: Int, val type: KneType.FUNCTION) : Member()
+    data class Invoke(override val id: Int, val type: ApiType.FUNCTION) : Member()
 }
 
 /** The module's members, the exported types' ids and their names on the app's side. */
-class ApiModel(val module: KneModule) {
+class ApiModel(val module: ApiModule) {
     val members = ArrayList<Member>()
 
     /** Client (flattened) name of every exported class and interface, by FQ name. */
@@ -85,20 +85,20 @@ class ApiModel(val module: KneModule) {
         module.functions.forEach { fn -> add { Member.Function(it, Owner.TopLevel, fn) } }
 
         // Lambdas the JVM returns (directly, or inside collections and nullable values)
-        fun scanReturned(type: KneType) {
+        fun scanReturned(type: ApiType) {
             when (type) {
-                is KneType.FUNCTION -> {
+                is ApiType.FUNCTION -> {
                     val key = signatureKey(type)
                     if (key !in invokers) add { Member.Invoke(it, type).also { m -> invokers[key] = m } }
                 }
-                is KneType.NULLABLE -> scanReturned(type.inner)
-                is KneType.LIST -> scanReturned(type.elementType)
-                is KneType.SET -> scanReturned(type.elementType)
-                is KneType.MAP -> {
+                is ApiType.NULLABLE -> scanReturned(type.inner)
+                is ApiType.LIST -> scanReturned(type.elementType)
+                is ApiType.SET -> scanReturned(type.elementType)
+                is ApiType.MAP -> {
                     scanReturned(type.keyType)
                     scanReturned(type.valueType)
                 }
-                is KneType.FLOW -> scanReturned(type.elementType)
+                is ApiType.FLOW -> scanReturned(type.elementType)
                 else -> Unit
             }
         }
@@ -108,8 +108,8 @@ class ApiModel(val module: KneModule) {
             .forEach { scanReturned(it.type) }
 
         // Most derived first, so that the first `is` matching an object is its most specific exported type
-        fun classDepth(cls: KneClass): Int = cls.superClass?.let { classesByFq[it] }?.let { classDepth(it) + 1 } ?: 0
-        fun interfaceDepth(iface: KneInterface): Int =
+        fun classDepth(cls: ApiClass): Int = cls.superClass?.let { classesByFq[it] }?.let { classDepth(it) + 1 } ?: 0
+        fun interfaceDepth(iface: ApiInterface): Int =
             (iface.superInterfaces.mapNotNull { interfacesByFq[it] }.maxOfOrNull { interfaceDepth(it) + 1 }) ?: 0
         module.classes.sortedByDescending { classDepth(it) }.forEach { typeIds[it.fqName] = typeIds.size }
         module.interfaces.sortedByDescending { interfaceDepth(it) }.forEach { typeIds[it.fqName] = typeIds.size }
@@ -118,15 +118,15 @@ class ApiModel(val module: KneModule) {
     fun clientName(fq: String): String = clientNames[fq] ?: fq.substringAfterLast('.')
 
     /** The type as the app's generated code names it. */
-    fun clientType(type: KneType): String = when (type) {
-        is KneType.OBJECT -> clientName(type.fqName)
-        is KneType.INTERFACE -> clientName(type.fqName)
-        is KneType.NULLABLE -> if (type.inner is KneType.FUNCTION) "(${clientType(type.inner)})?" else "${clientType(type.inner)}?"
-        is KneType.FUNCTION -> "(${type.paramTypes.joinToString(", ") { clientType(it) }}) -> ${clientType(type.returnType)}"
-        is KneType.LIST -> "List<${clientType(type.elementType)}>"
-        is KneType.SET -> "Set<${clientType(type.elementType)}>"
-        is KneType.MAP -> "Map<${clientType(type.keyType)}, ${clientType(type.valueType)}>"
-        is KneType.FLOW -> "kotlinx.coroutines.flow.Flow<${clientType(type.elementType)}>"
+    fun clientType(type: ApiType): String = when (type) {
+        is ApiType.OBJECT -> clientName(type.fqName)
+        is ApiType.INTERFACE -> clientName(type.fqName)
+        is ApiType.NULLABLE -> if (type.inner is ApiType.FUNCTION) "(${clientType(type.inner)})?" else "${clientType(type.inner)}?"
+        is ApiType.FUNCTION -> "(${type.paramTypes.joinToString(", ") { clientType(it) }}) -> ${clientType(type.returnType)}"
+        is ApiType.LIST -> "List<${clientType(type.elementType)}>"
+        is ApiType.SET -> "Set<${clientType(type.elementType)}>"
+        is ApiType.MAP -> "Map<${clientType(type.keyType)}, ${clientType(type.valueType)}>"
+        is ApiType.FLOW -> "kotlinx.coroutines.flow.Flow<${clientType(type.elementType)}>"
         else -> type.clientName
     }
 
@@ -145,8 +145,8 @@ class ApiModel(val module: KneModule) {
     }
 
     /** The superclass chain of [cls] within the module, nearest first. */
-    fun superClasses(cls: KneClass): List<KneClass> {
-        val result = ArrayList<KneClass>()
+    fun superClasses(cls: ApiClass): List<ApiClass> {
+        val result = ArrayList<ApiClass>()
         var current = cls.superClass?.let { classesByFq[it] }
         while (current != null) {
             result += current
@@ -156,7 +156,7 @@ class ApiModel(val module: KneModule) {
     }
 
     companion object {
-        fun signatureKey(type: KneType.FUNCTION): String =
+        fun signatureKey(type: ApiType.FUNCTION): String =
             (type.paramTypes + type.returnType).joinToString("_") { it.serverName }
                 .replace(Regex("[^A-Za-z0-9_]"), "_")
     }

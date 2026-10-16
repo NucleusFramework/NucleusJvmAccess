@@ -3,7 +3,7 @@ plugins {
     id("dev.nucleusframework.nja.facade")
 }
 
-// NNA's calculator example, unchanged: here it runs on the JVM, used from iOS and Android
+// A calculator exercising every supported type and declaration: it runs on the JVM, used from iOS and Android
 kotlin {
     jvmToolchain(25)
 }

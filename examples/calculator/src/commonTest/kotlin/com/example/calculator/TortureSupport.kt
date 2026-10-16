@@ -5,11 +5,8 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.test.fail
 import kotlin.time.TimeSource
 
-// NNA's test suites, ported from its JVM tests to the common tests of both mobile targets: the few JVM APIs they use
-// have common stand-ins here (same-package declarations win over the JVM's default imports, so the tests are
-// unchanged). Their KotlinNativeException is NJA's JvmException: the façade's exceptions, rethrown in the app.
-
-typealias KotlinNativeException = dev.nucleusframework.nja.JvmException
+// The suites run on every mobile target, from common tests: the few JVM APIs they use have common stand-ins here
+// (same-package declarations win over the JVM's default imports).
 
 /** A platform thread (java.lang.Thread on Android, a pthread on iOS). An uncaught exception is reported, as on the JVM. */
 expect class Thread(body: () -> Unit) {

@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -74,20 +76,20 @@ class SuspendBasicTest {
 
     @Test fun `suspend - failAfterDelay throws`() = runBlocking<Unit> {
         Calculator(0).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.failAfterDelay() }
+            assertFailsWith<JvmException> { calc.failAfterDelay() }
         }
     }
 
     @Test fun `suspend - failAfterDelay message`() = runBlocking<Unit> {
         Calculator(0).use { calc ->
-            val e = assertFailsWith<KotlinNativeException> { calc.failAfterDelay() }
+            val e = assertFailsWith<JvmException> { calc.failAfterDelay() }
             assertTrue(e.message!!.contains("intentional suspend error"))
         }
     }
 
     @Test fun `suspend - error then success`() = runBlocking<Unit> {
         Calculator(0).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.failAfterDelay() }
+            assertFailsWith<JvmException> { calc.failAfterDelay() }
             assertEquals(10, calc.delayedAdd(4, 6)) // still works
         }
     }
@@ -206,7 +208,7 @@ class SuspendBasicTest {
     }
 
     @Test fun `suspend edge - multiError fail`() = runBlocking<Unit> {
-        Calculator(0).use { assertFailsWith<KotlinNativeException> { it.multiError(true) } }
+        Calculator(0).use { assertFailsWith<JvmException> { it.multiError(true) } }
     }
 
     @Test fun `suspend edge - alternating success and error`() = runBlocking<Unit> {
@@ -215,7 +217,7 @@ class SuspendBasicTest {
                 if (i % 2 == 0) {
                     assertEquals(5, calc.multiError(false))
                 } else {
-                    assertFailsWith<KotlinNativeException> { calc.multiError(true) }
+                    assertFailsWith<JvmException> { calc.multiError(true) }
                 }
             }
         }
@@ -223,7 +225,7 @@ class SuspendBasicTest {
 
     @Test fun `suspend edge - 5 errors then success`() = runBlocking<Unit> {
         Calculator(7).use { calc ->
-            repeat(5) { assertFailsWith<KotlinNativeException> { calc.multiError(true) } }
+            repeat(5) { assertFailsWith<JvmException> { calc.multiError(true) } }
             assertEquals(7, calc.multiError(false))
         }
     }

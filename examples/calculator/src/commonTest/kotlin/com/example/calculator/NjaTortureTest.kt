@@ -22,7 +22,7 @@ import kotlin.test.assertTrue
 import kotlin.time.TimeSource
 
 /**
- * NJA's own torture: what NNA's suites don't reach, specific to a JVM inside the app's process: the JVM's faults
+ * NJA's own torture, specific to a JVM inside the app's process: the JVM's faults
  * next to the app runtime's, nested calls across the two, the JVM's threads, and the bridge's lifecycles.
  */
 @OptIn(NjaInternal::class)

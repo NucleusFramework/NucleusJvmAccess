@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -154,24 +156,24 @@ class EdgeCaseTest {
 
     @Test fun `edge exc - divide by zero throws`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
         }
     }
     @Test fun `edge exc - failAlways throws`() {
         Calculator(0).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.failAlways() }
+            assertFailsWith<JvmException> { calc.failAlways() }
         }
     }
     @Test fun `edge exc - recovery after exception`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             assertEquals(15, calc.add(5)) // still works
         }
     }
     @Test fun `edge exc - multiple exceptions in sequence`() {
         Calculator(0).use { calc ->
             repeat(5) {
-                assertFailsWith<KotlinNativeException> { calc.failAlways() }
+                assertFailsWith<JvmException> { calc.failAlways() }
             }
             calc.add(1); assertEquals(1, calc.current) // still functional
         }
@@ -289,7 +291,7 @@ class EdgeCaseTest {
 
     @Test fun `integration - exception does not leak into callbacks`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             // Callback still works after exception
             var received = emptyList<Int>()
             calc.onScoresReady { received = it }

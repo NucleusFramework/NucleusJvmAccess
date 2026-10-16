@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -63,7 +65,7 @@ class MonkeyTest {
                         val d = rnd.nextInt(-3, 4)
                         if (d == 0) {
                             val e = runCatching { calc.divide(0) }.exceptionOrNull()
-                            assertTrue(e is KotlinNativeException && e.message == "Division by zero", "$where: $e")
+                            assertTrue(e is JvmException && e.message == "Division by zero", "$where: $e")
                         } else {
                             model.acc /= d
                             assertEquals(model.acc, calc.divide(d), where)
@@ -120,7 +122,7 @@ class MonkeyTest {
                         assertEquals((0 until n).associateBy { "key_$it" }, calc.bigMap(n), where)
                     }
                     17 -> {
-                        // NJA's strings are length-prefixed: NUL makes the round trip (NNA's C strings reject it)
+                        // NJA's strings are length-prefixed: NUL makes the round trip
                         val s = "\u0000" + randomString(rnd)
                         assertEquals(s, calc.echo(s), where)
                     }
@@ -182,7 +184,7 @@ class MonkeyTest {
                     outcome.exceptionOrNull()?.let { e ->
                         val allowed = e is IllegalStateException && e.message == "JVM object has been closed" ||
                             e is MonkeyException ||
-                            e is KotlinNativeException && e.message == "Division by zero"
+                            e is JvmException && e.message == "Division by zero"
                         if (!allowed) throw AssertionError("$where: unexpected ${e::class.simpleName}: ${e.message}", e)
                     }
                 }

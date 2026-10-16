@@ -2,50 +2,50 @@ package dev.nucleusframework.nja.plugin.ir
 
 import java.io.Serializable
 
-data class KneModule(
+data class ApiModule(
     val libName: String,
     val packages: Set<String>,
-    val classes: List<KneClass>,
-    val dataClasses: List<KneDataClass>,
-    val enums: List<KneEnum>,
-    val functions: List<KneFunction>,
-    val interfaces: List<KneInterface> = emptyList(),
+    val classes: List<ApiClass>,
+    val dataClasses: List<ApiDataClass>,
+    val enums: List<ApiEnum>,
+    val functions: List<ApiFunction>,
+    val interfaces: List<ApiInterface> = emptyList(),
 ) : Serializable
 
-data class KneDataClass(
+data class ApiDataClass(
     val simpleName: String,
     val fqName: String,
-    val fields: List<KneParam>,
+    val fields: List<ApiParam>,
     val isCommon: Boolean = false,
-    val source: KneSourceDecl? = null,
+    val source: ApiSourceDecl? = null,
 ) : Serializable
 
 /**
  * Verbatim source of a value-type declaration (enum / data class), copied as-is to the JVM side
  * so that the JVM variant matches the native one (body members, defaults, KDoc, annotations).
  */
-data class KneSourceDecl(
+data class ApiSourceDecl(
     val text: String,
     val imports: List<String> = emptyList(),
 ) : Serializable
 
-data class KneInterface(
+data class ApiInterface(
     val simpleName: String,
     val fqName: String,
-    val methods: List<KneFunction>,
-    val properties: List<KneProperty>,
+    val methods: List<ApiFunction>,
+    val properties: List<ApiProperty>,
     val superInterfaces: List<String> = emptyList(),
     val isCommon: Boolean = false,
 ) : Serializable
 
-data class KneClass(
+data class ApiClass(
     val simpleName: String,
     val fqName: String,
-    val constructor: KneConstructor,
-    val methods: List<KneFunction>,
-    val properties: List<KneProperty>,
-    val companionMethods: List<KneFunction> = emptyList(),
-    val companionProperties: List<KneProperty> = emptyList(),
+    val constructor: ApiConstructor,
+    val methods: List<ApiFunction>,
+    val properties: List<ApiProperty>,
+    val companionMethods: List<ApiFunction> = emptyList(),
+    val companionProperties: List<ApiProperty> = emptyList(),
     val isOpen: Boolean = false,
     val isAbstract: Boolean = false,
     val isSealed: Boolean = false,
@@ -55,67 +55,67 @@ data class KneClass(
     val isCommon: Boolean = false,
 ) : Serializable
 
-data class KneEnumEntry(
+data class ApiEnumEntry(
     val name: String,
     val constructorArgs: List<String> = emptyList(),
 ) : Serializable
 
-data class KneEnum(
+data class ApiEnum(
     val simpleName: String,
     val fqName: String,
-    val entries: List<KneEnumEntry>,
-    val constructorParams: List<KneParam> = emptyList(),
-    val source: KneSourceDecl? = null,
+    val entries: List<ApiEnumEntry>,
+    val constructorParams: List<ApiParam> = emptyList(),
+    val source: ApiSourceDecl? = null,
 ) : Serializable
 
-data class KneConstructor(
-    val params: List<KneParam>,
+data class ApiConstructor(
+    val params: List<ApiParam>,
 ) : Serializable
 
-data class KneFunction(
+data class ApiFunction(
     val name: String,
-    val params: List<KneParam>,
-    val returnType: KneType,
+    val params: List<ApiParam>,
+    val returnType: ApiType,
     val isSuspend: Boolean = false,
     val isExtension: Boolean = false,
-    val receiverType: KneType? = null,
+    val receiverType: ApiType? = null,
     val isOverride: Boolean = false,
 ) : Serializable
 
-data class KneProperty(
+data class ApiProperty(
     val name: String,
-    val type: KneType,
+    val type: ApiType,
     val mutable: Boolean,
     val isOverride: Boolean = false,
 ) : Serializable
 
-data class KneParam(
+data class ApiParam(
     val name: String,
-    val type: KneType,
+    val type: ApiType,
     val hasDefault: Boolean = false,
 ) : Serializable
 
-sealed class KneType : Serializable {
-    data object INT : KneType()
-    data object LONG : KneType()
-    data object DOUBLE : KneType()
-    data object FLOAT : KneType()
-    data object BOOLEAN : KneType()
-    data object BYTE : KneType()
-    data object SHORT : KneType()
-    data object STRING : KneType()
-    data object UNIT : KneType()
-    data class OBJECT(val fqName: String, val simpleName: String) : KneType()
-    data class INTERFACE(val fqName: String, val simpleName: String) : KneType()
-    data class ENUM(val fqName: String, val simpleName: String) : KneType()
-    data class NULLABLE(val inner: KneType) : KneType()
-    data class FUNCTION(val paramTypes: List<KneType>, val returnType: KneType) : KneType()
-    data class DATA_CLASS(val fqName: String, val simpleName: String, val fields: List<KneParam>) : KneType()
-    data object BYTE_ARRAY : KneType()
-    data class LIST(val elementType: KneType) : KneType()
-    data class SET(val elementType: KneType) : KneType()
-    data class MAP(val keyType: KneType, val valueType: KneType) : KneType()
-    data class FLOW(val elementType: KneType) : KneType()
+sealed class ApiType : Serializable {
+    data object INT : ApiType()
+    data object LONG : ApiType()
+    data object DOUBLE : ApiType()
+    data object FLOAT : ApiType()
+    data object BOOLEAN : ApiType()
+    data object BYTE : ApiType()
+    data object SHORT : ApiType()
+    data object STRING : ApiType()
+    data object UNIT : ApiType()
+    data class OBJECT(val fqName: String, val simpleName: String) : ApiType()
+    data class INTERFACE(val fqName: String, val simpleName: String) : ApiType()
+    data class ENUM(val fqName: String, val simpleName: String) : ApiType()
+    data class NULLABLE(val inner: ApiType) : ApiType()
+    data class FUNCTION(val paramTypes: List<ApiType>, val returnType: ApiType) : ApiType()
+    data class DATA_CLASS(val fqName: String, val simpleName: String, val fields: List<ApiParam>) : ApiType()
+    data object BYTE_ARRAY : ApiType()
+    data class LIST(val elementType: ApiType) : ApiType()
+    data class SET(val elementType: ApiType) : ApiType()
+    data class MAP(val keyType: ApiType, val valueType: ApiType) : ApiType()
+    data class FLOW(val elementType: ApiType) : ApiType()
 
     /** Preserves singleton identity when deserialized from the incremental cache. */
     protected fun readResolve(): Any = when (this) {

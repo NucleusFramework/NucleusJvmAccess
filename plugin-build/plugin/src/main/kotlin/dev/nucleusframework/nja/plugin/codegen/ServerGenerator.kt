@@ -1,8 +1,8 @@
 package dev.nucleusframework.nja.plugin.codegen
 
-import dev.nucleusframework.nja.plugin.ir.KneFunction
-import dev.nucleusframework.nja.plugin.ir.KneParam
-import dev.nucleusframework.nja.plugin.ir.KneType
+import dev.nucleusframework.nja.plugin.ir.ApiFunction
+import dev.nucleusframework.nja.plugin.ir.ApiParam
+import dev.nucleusframework.nja.plugin.ir.ApiType
 
 /**
  * The JVM side of a façade: a module dispatching each member of the [ApiModel] to the façade, compiled with it (so the
@@ -62,7 +62,7 @@ class ServerGenerator(private val model: ApiModel, private val libName: String) 
             }
             is Member.Invoke -> {
                 appendLine("        val fn = Handles.get<${member.type.serverName}>(njaR.readLong())")
-                appendArgs(member.type.paramTypes.mapIndexed { i, t -> KneParam("a$i", t) })
+                appendArgs(member.type.paramTypes.mapIndexed { i, t -> ApiParam("a$i", t) })
                 val args = member.type.paramTypes.indices.joinToString(", ") { "p$it" }
                 appendResult(member.type.returnType, "fn($args)")
             }
@@ -80,10 +80,10 @@ class ServerGenerator(private val model: ApiModel, private val libName: String) 
         Owner.TopLevel -> error("no receiver")
     }
 
-    private fun StringBuilder.appendFunction(owner: Owner, fn: KneFunction) {
-        val async = fn.isSuspend || fn.returnType is KneType.FLOW
+    private fun StringBuilder.appendFunction(owner: Owner, fn: ApiFunction) {
+        val async = fn.isSuspend || fn.returnType is ApiType.FLOW
         if (async) appendLine("        val callId = njaR.readLong()")
-        if (fn.returnType is KneType.FLOW) appendLine("        val credits = njaR.readInt()")
+        if (fn.returnType is ApiType.FLOW) appendLine("        val credits = njaR.readInt()")
         val call = when (owner) {
             is Owner.Instance, is Owner.Companion -> "${receiver(owner)}.${esc(fn.name)}"
             Owner.TopLevel -> if (fn.isExtension) {
@@ -97,24 +97,24 @@ class ServerGenerator(private val model: ApiModel, private val libName: String) 
         val invocation = "$call(${fn.params.indices.joinToString(", ") { "p$it" }})"
         val returnType = fn.returnType
         when {
-            returnType is KneType.FLOW -> {
+            returnType is ApiType.FLOW -> {
                 val element = returnType.elementType
                 appendLine("        NjaAsync.launchFlow(callId, credits, $invocation) { w, e -> ${codec.encode(element, "e", "w")} }")
             }
             fn.isSuspend -> {
-                val encode = if (returnType == KneType.UNIT) "Unit" else codec.encode(returnType, "v", "w")
+                val encode = if (returnType == ApiType.UNIT) "Unit" else codec.encode(returnType, "v", "w")
                 appendLine("        NjaAsync.launchSuspend(callId, njaW, { $invocation }) { w, v -> $encode }")
             }
             else -> appendResult(returnType, invocation)
         }
     }
 
-    private fun StringBuilder.appendArgs(params: List<KneParam>) {
+    private fun StringBuilder.appendArgs(params: List<ApiParam>) {
         params.forEachIndexed { i, p -> appendLine("        val p$i = ${codec.decode(p.type, "njaR")}") }
     }
 
-    private fun StringBuilder.appendResult(type: KneType, invocation: String) {
-        if (type == KneType.UNIT) {
+    private fun StringBuilder.appendResult(type: ApiType, invocation: String) {
+        if (type == ApiType.UNIT) {
             appendLine("        $invocation")
         } else {
             appendLine("        val res = $invocation")

@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -199,7 +201,7 @@ class DataClassTest {
     @Test
     fun `TaggedPoint after exception recovery`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             calc.applyOp(Operation.ADD, 5)
             val tp = calc.getTaggedPoint()
             assertEquals(15, tp.point.x)

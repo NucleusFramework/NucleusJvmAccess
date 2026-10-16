@@ -1,17 +1,17 @@
 package dev.nucleusframework.nja.plugin.analysis
 
-import dev.nucleusframework.nja.plugin.ir.KneClass
-import dev.nucleusframework.nja.plugin.ir.KneConstructor
-import dev.nucleusframework.nja.plugin.ir.KneDataClass
-import dev.nucleusframework.nja.plugin.ir.KneEnum
-import dev.nucleusframework.nja.plugin.ir.KneEnumEntry
-import dev.nucleusframework.nja.plugin.ir.KneFunction
-import dev.nucleusframework.nja.plugin.ir.KneInterface
-import dev.nucleusframework.nja.plugin.ir.KneModule
-import dev.nucleusframework.nja.plugin.ir.KneParam
-import dev.nucleusframework.nja.plugin.ir.KneProperty
-import dev.nucleusframework.nja.plugin.ir.KneSourceDecl
-import dev.nucleusframework.nja.plugin.ir.KneType
+import dev.nucleusframework.nja.plugin.ir.ApiClass
+import dev.nucleusframework.nja.plugin.ir.ApiConstructor
+import dev.nucleusframework.nja.plugin.ir.ApiDataClass
+import dev.nucleusframework.nja.plugin.ir.ApiEnum
+import dev.nucleusframework.nja.plugin.ir.ApiEnumEntry
+import dev.nucleusframework.nja.plugin.ir.ApiFunction
+import dev.nucleusframework.nja.plugin.ir.ApiInterface
+import dev.nucleusframework.nja.plugin.ir.ApiModule
+import dev.nucleusframework.nja.plugin.ir.ApiParam
+import dev.nucleusframework.nja.plugin.ir.ApiProperty
+import dev.nucleusframework.nja.plugin.ir.ApiSourceDecl
+import dev.nucleusframework.nja.plugin.ir.ApiType
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreApplicationEnvironment
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreApplicationEnvironmentMode
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreProjectEnvironment
@@ -51,13 +51,13 @@ class PsiSourceParser {
     data class Source(val file: File, val isCommon: Boolean)
 
     class Result(
-        val module: KneModule,
+        val module: ApiModule,
         /** Source file → IR mapping, keyed by absolute path; feed it back as `previous` on the next run. */
         val files: Map<String, CachedSourceFile>,
         val parsedFiles: Int,
     )
 
-    fun parse(files: Collection<File>, libName: String, commonFiles: Collection<File>): KneModule {
+    fun parse(files: Collection<File>, libName: String, commonFiles: Collection<File>): ApiModule {
         val sources = commonFiles.filter { it.extension == "kt" }.map { Source(it, isCommon = true) } +
             files.filter { it.extension == "kt" }.map { Source(it, isCommon = false) }
         return parseIncremental(sources, libName, emptyMap()).module
@@ -158,11 +158,11 @@ class PsiSourceParser {
     private fun parseFragment(ktFile: KtFile, scope: RecordingScope, isCommonFile: Boolean): FileFragment {
         val pkg = ktFile.packageFqName.asString()
         val imports = ktFile.importDirectives.map { it.text }
-        val classes = mutableListOf<KneClass>()
-        val dataClasses = mutableListOf<KneDataClass>()
-        val enums = mutableListOf<KneEnum>()
-        val functions = mutableListOf<Pair<String, KneFunction>>()
-        val interfaces = mutableListOf<KneInterface>()
+        val classes = mutableListOf<ApiClass>()
+        val dataClasses = mutableListOf<ApiDataClass>()
+        val enums = mutableListOf<ApiEnum>()
+        val functions = mutableListOf<Pair<String, ApiFunction>>()
+        val interfaces = mutableListOf<ApiInterface>()
 
         fun processDeclarations(declarations: List<KtDeclaration>, parentSimpleName: String?, isTopLevel: Boolean) {
             for (decl in declarations) {
@@ -174,7 +174,7 @@ class PsiSourceParser {
                     decl is KtClass && decl.isData() -> {
                         val name = decl.name ?: continue
                         val dcInfo = scope.dataClass(name) ?: continue
-                        dataClasses += KneDataClass(
+                        dataClasses += ApiDataClass(
                             name, dcInfo.first, dcInfo.second,
                             isCommon = scope.isCommonDataClass(name),
                             source = sourceDecl(decl, imports),
@@ -199,8 +199,8 @@ class PsiSourceParser {
                         // Use a unique key for extension functions to avoid collisions
                         val key = if (fn.isExtension && fn.receiverType != null) {
                             val receiverName = when (val rt = fn.receiverType) {
-                                is KneType.OBJECT -> rt.simpleName
-                                is KneType.INTERFACE -> rt.simpleName
+                                is ApiType.OBJECT -> rt.simpleName
+                                is ApiType.INTERFACE -> rt.simpleName
                                 else -> rt.clientName
                             }
                             "${receiverName}.${fn.name}"
@@ -215,12 +215,12 @@ class PsiSourceParser {
     }
 
     /** Merges per-file fragments in source order; the first declaration of a given FQ name wins. */
-    private fun merge(libName: String, fragments: List<FileFragment>, table: SymbolTable): KneModule {
-        val classMap = LinkedHashMap<String, KneClass>()
-        val dataClassMap = LinkedHashMap<String, KneDataClass>()
-        val enumMap = LinkedHashMap<String, KneEnum>()
-        val functionMap = LinkedHashMap<String, KneFunction>()
-        val interfaceMap = LinkedHashMap<String, KneInterface>()
+    private fun merge(libName: String, fragments: List<FileFragment>, table: SymbolTable): ApiModule {
+        val classMap = LinkedHashMap<String, ApiClass>()
+        val dataClassMap = LinkedHashMap<String, ApiDataClass>()
+        val enumMap = LinkedHashMap<String, ApiEnum>()
+        val functionMap = LinkedHashMap<String, ApiFunction>()
+        val interfaceMap = LinkedHashMap<String, ApiInterface>()
         val packages = LinkedHashSet<String>()
 
         for (fragment in fragments) {
@@ -235,36 +235,36 @@ class PsiSourceParser {
         // Ensure common data classes are present even if only defined in commonMain
         for (name in table.commonDataClassNames) {
             val (fq, fields) = table.dataClasses[name] ?: continue
-            dataClassMap.putIfAbsent(fq, KneDataClass(name, fq, fields, isCommon = true))
+            dataClassMap.putIfAbsent(fq, ApiDataClass(name, fq, fields, isCommon = true))
         }
 
-        return KneModule(
+        return ApiModule(
             libName, packages, classMap.values.toList(), dataClassMap.values.toList(),
             enumMap.values.toList(), functionMap.values.toList(), interfaceMap.values.toList(),
         )
     }
 
     /** Captures the declaration text (incl. KDoc and annotations) re-indented to top level. */
-    private fun sourceDecl(decl: KtClass, imports: List<String>): KneSourceDecl {
+    private fun sourceDecl(decl: KtClass, imports: List<String>): ApiSourceDecl {
         val indent = decl.prevSibling?.text?.substringAfterLast('\n', missingDelimiterValue = "")?.takeIf { it.isBlank() }.orEmpty()
         val text = (indent + decl.text).trimIndent()
-        return KneSourceDecl(text, imports)
+        return ApiSourceDecl(text, imports)
     }
 
-    private fun parseClass(ktClass: KtClass, pkg: String, scope: RecordingScope, isCommon: Boolean = false): KneClass? {
+    private fun parseClass(ktClass: KtClass, pkg: String, scope: RecordingScope, isCommon: Boolean = false): ApiClass? {
         val name = ktClass.name ?: return null
         val fq = if (pkg.isNotEmpty()) "$pkg.$name" else name
         val rawCtorParams = ktClass.primaryConstructor?.valueParameters ?: emptyList()
         val ctorParams = rawCtorParams.mapNotNull { param ->
             val pName = param.name ?: return@mapNotNull null
             val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
-            KneParam(pName, type, hasDefault = param.hasDefaultValue())
+            ApiParam(pName, type, hasDefault = param.hasDefaultValue())
         }
         // Constructor val/var params are properties — collect them for getter/setter generation
         val ctorProperties = rawCtorParams.filter { it.hasValOrVar() }.mapNotNull { param ->
             val pName = param.name ?: return@mapNotNull null
             val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
-            KneProperty(pName, type, param.isMutable)
+            ApiProperty(pName, type, param.isMutable)
         }
 
         // Extract modifiers
@@ -293,10 +293,10 @@ class PsiSourceParser {
             }
         } else emptyList()
 
-        val methods = mutableListOf<KneFunction>()
-        val properties = mutableListOf<KneProperty>()
-        val companionMethods = mutableListOf<KneFunction>()
-        val companionProperties = mutableListOf<KneProperty>()
+        val methods = mutableListOf<ApiFunction>()
+        val properties = mutableListOf<ApiProperty>()
+        val companionMethods = mutableListOf<ApiFunction>()
+        val companionProperties = mutableListOf<ApiProperty>()
         val ctorParamNames = ctorParams.map { it.name }.toSet()
 
         // Collect body method names first to detect manual getters that would clash with ctor properties
@@ -337,19 +337,19 @@ class PsiSourceParser {
                 }
             }
         }
-        return KneClass(
-            name, fq, KneConstructor(ctorParams), methods, properties, companionMethods, companionProperties,
+        return ApiClass(
+            name, fq, ApiConstructor(ctorParams), methods, properties, companionMethods, companionProperties,
             isOpen = isOpen, isAbstract = isAbstract, isSealed = isSealed,
             superClass = superClass, interfaces = implementedInterfaces, sealedSubclasses = sealedSubclasses,
             isCommon = isCommon,
         )
     }
 
-    private fun parseInterface(ktClass: KtClass, pkg: String, scope: RecordingScope, isCommon: Boolean = false): KneInterface? {
+    private fun parseInterface(ktClass: KtClass, pkg: String, scope: RecordingScope, isCommon: Boolean = false): ApiInterface? {
         val name = ktClass.name ?: return null
         val fq = if (pkg.isNotEmpty()) "$pkg.$name" else name
-        val methods = mutableListOf<KneFunction>()
-        val properties = mutableListOf<KneProperty>()
+        val methods = mutableListOf<ApiFunction>()
+        val properties = mutableListOf<ApiProperty>()
         val superInterfaces = mutableListOf<String>()
 
         // Extract super interfaces
@@ -368,10 +368,10 @@ class PsiSourceParser {
                 is KtProperty -> parseProperty(decl, scope)?.let { properties.add(it) }
             }
         }
-        return KneInterface(name, fq, methods, properties, superInterfaces, isCommon = isCommon)
+        return ApiInterface(name, fq, methods, properties, superInterfaces, isCommon = isCommon)
     }
 
-    private fun parseEnum(ktClass: KtClass, pkg: String, scope: RecordingScope): KneEnum? {
+    private fun parseEnum(ktClass: KtClass, pkg: String, scope: RecordingScope): ApiEnum? {
         val name = ktClass.name ?: return null
         val fq = if (pkg.isNotEmpty()) "$pkg.$name" else name
 
@@ -384,16 +384,16 @@ class PsiSourceParser {
 
         val rawCtorParams = ktClass.primaryConstructor?.valueParameters ?: emptyList()
         val ctorParams = rawCtorParams.map { param ->
-            val pName = param.name ?: return KneEnum(name, fq, entries)
+            val pName = param.name ?: return ApiEnum(name, fq, entries)
             val type = resolveType(param.typeReference, scope)
-                ?: return KneEnum(name, fq, entries)
-            KneParam(pName, type, hasDefault = param.hasDefaultValue())
+                ?: return ApiEnum(name, fq, entries)
+            ApiParam(pName, type, hasDefault = param.hasDefaultValue())
         }
 
-        return KneEnum(name, fq, entries, ctorParams)
+        return ApiEnum(name, fq, entries, ctorParams)
     }
 
-    private fun parseEnumEntries(psiEntries: List<KtEnumEntry>): List<KneEnumEntry> =
+    private fun parseEnumEntries(psiEntries: List<KtEnumEntry>): List<ApiEnumEntry> =
         psiEntries.mapNotNull { entry ->
             val entryName = entry.name ?: return@mapNotNull null
             val args = entry.superTypeListEntries
@@ -403,10 +403,10 @@ class PsiSourceParser {
                 ?.arguments
                 ?.map { it.getArgumentExpression()?.text ?: return@mapNotNull null }
                 ?: emptyList()
-            KneEnumEntry(entryName, args)
+            ApiEnumEntry(entryName, args)
         }
 
-    private fun parseFunction(fn: KtNamedFunction, scope: RecordingScope): KneFunction? {
+    private fun parseFunction(fn: KtNamedFunction, scope: RecordingScope): ApiFunction? {
         val name = fn.name ?: return null
         if (name == "init") return null
         val isSuspend = fn.hasModifier(KtTokens.SUSPEND_KEYWORD)
@@ -414,27 +414,27 @@ class PsiSourceParser {
         val params = fn.valueParameters.mapNotNull { param ->
             val pName = param.name ?: return@mapNotNull null
             val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
-            KneParam(pName, type)
+            ApiParam(pName, type)
         }
-        val returnType = fn.typeReference?.let { resolveType(it, scope) } ?: KneType.UNIT
+        val returnType = fn.typeReference?.let { resolveType(it, scope) } ?: ApiType.UNIT
 
         // Extension function detection
         val receiverTypeRef = fn.receiverTypeReference
         val receiverType = if (receiverTypeRef != null) resolveType(receiverTypeRef, scope) else null
         val isExtension = receiverType != null
 
-        return KneFunction(name, params, returnType, isSuspend = isSuspend,
+        return ApiFunction(name, params, returnType, isSuspend = isSuspend,
             isExtension = isExtension, receiverType = receiverType, isOverride = isOverride)
     }
 
-    private fun parseProperty(prop: KtProperty, scope: RecordingScope): KneProperty? {
+    private fun parseProperty(prop: KtProperty, scope: RecordingScope): ApiProperty? {
         val name = prop.name ?: return null
         val type = resolveType(prop.typeReference, scope) ?: return null
         val isOverride = prop.hasModifier(KtTokens.OVERRIDE_KEYWORD)
-        return KneProperty(name, type, prop.isVar, isOverride = isOverride)
+        return ApiProperty(name, type, prop.isVar, isOverride = isOverride)
     }
 
-    private fun resolveType(typeRef: KtTypeReference?, scope: TypeScope): KneType? =
+    private fun resolveType(typeRef: KtTypeReference?, scope: TypeScope): ApiType? =
         TypeResolver.resolve(typeRef.toSyntax(), scope)
 
     private fun KtTypeReference?.toSyntax(): TypeSyntax? = this?.typeElement?.let(::syntaxOf)

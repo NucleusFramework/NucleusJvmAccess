@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking

@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -89,7 +91,7 @@ class FlowTest {
     @Test fun `flow - failingFlow throws after partial`() = runBlocking<Unit> {
         Calculator(0).use { calc ->
             val items = mutableListOf<Int>()
-            assertFailsWith<KotlinNativeException> {
+            assertFailsWith<JvmException> {
                 calc.failingFlow().collect { items.add(it) }
             }
             assertEquals(listOf(1, 2), items) // got 2 elements before error

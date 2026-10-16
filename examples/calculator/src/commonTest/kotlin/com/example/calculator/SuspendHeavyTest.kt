@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -55,7 +57,7 @@ class SuspendHeavyTest {
                         delay(5)
                         j.cancelAndJoin()
                     }
-                    2 -> assertFailsWith<KotlinNativeException> { calc.failAfterDelay() }
+                    2 -> assertFailsWith<JvmException> { calc.failAfterDelay() }
                 }
             }
         }
@@ -190,7 +192,7 @@ class SuspendHeavyTest {
     @Test fun `suspend mem - 1K error cycles no leak`() = runBlocking<Unit> {
         repeat(1_000) {
             Calculator(0).use { calc ->
-                assertFailsWith<KotlinNativeException> { calc.failAfterDelay() }
+                assertFailsWith<JvmException> { calc.failAfterDelay() }
             }
         }
         System.gc()

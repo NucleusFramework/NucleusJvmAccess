@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -242,9 +244,9 @@ class CoreTest {
     }
 
     @Test
-    fun `divide by zero throws KotlinNativeException`() {
+    fun `divide by zero throws JvmException`() {
         Calculator(10).use { calc ->
-            val ex = assertFailsWith<KotlinNativeException> {
+            val ex = assertFailsWith<JvmException> {
                 calc.divide(0)
             }
             assertTrue(ex.message!!.contains("Division by zero"), "Expected 'Division by zero' but got: ${ex.message}")
@@ -254,7 +256,7 @@ class CoreTest {
     @Test
     fun `failAlways throws with correct message`() {
         Calculator(0).use { calc ->
-            val ex = assertFailsWith<KotlinNativeException> {
+            val ex = assertFailsWith<JvmException> {
                 calc.failAlways()
             }
             assertTrue(ex.message!!.contains("Intentional error"), "Expected 'Intentional error' but got: ${ex.message}")
@@ -264,7 +266,7 @@ class CoreTest {
     @Test
     fun `calculator works normally after exception`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             // Subsequent calls should work fine
             assertEquals(15, calc.add(5))
             assertEquals(15, calc.current)
@@ -274,8 +276,8 @@ class CoreTest {
     @Test
     fun `multiple exceptions in sequence`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             // Still works
             assertEquals(5, calc.divide(2))
         }

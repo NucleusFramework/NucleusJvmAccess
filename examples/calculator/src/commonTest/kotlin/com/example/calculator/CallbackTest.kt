@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -405,7 +407,7 @@ class CallbackTest {
     @Test
     fun `exception then callback still works`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             val result = calc.transform { it + 1 }
             assertEquals(11, result)
         }
@@ -414,7 +416,7 @@ class CallbackTest {
     @Test
     fun `exception then data class still works`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             val p = calc.getPoint()
             assertEquals(10, p.x)
         }
@@ -423,7 +425,7 @@ class CallbackTest {
     @Test
     fun `exception then nullable still works`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             assertEquals(5, calc.divideOrNull(2))
         }
     }
@@ -431,14 +433,14 @@ class CallbackTest {
     @Test
     fun `exception then enum still works`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             assertEquals(15, calc.applyOp(Operation.ADD, 5))
         }
     }
 
     @Test
     fun `exception then companion still works`() {
-        assertFailsWith<KotlinNativeException> {
+        assertFailsWith<JvmException> {
             Calculator(0).use { it.divide(0) }
         }
         assertEquals("2.0", Calculator.version())
@@ -447,7 +449,7 @@ class CallbackTest {
     @Test
     fun `exception then string still works`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             assertEquals("Calculator(current=10)", calc.describe())
         }
     }
@@ -623,7 +625,7 @@ class CallbackTest {
     fun `10 exception recoveries`() {
         Calculator(10).use { calc ->
             for (i in 1..10) {
-                assertFailsWith<KotlinNativeException> { calc.divide(0) }
+                assertFailsWith<JvmException> { calc.divide(0) }
                 assertEquals(10, calc.current)
             }
             // Still works after all exceptions
@@ -737,7 +739,7 @@ class CallbackTest {
     @Test
     fun `callbacks work after exception recovery`() {
         Calculator(10).use { calc ->
-            assertFailsWith<KotlinNativeException> { calc.divide(0) }
+            assertFailsWith<JvmException> { calc.divide(0) }
             // Callback should still work after exception
             var received = -1
             calc.onValueChanged { value -> received = value }

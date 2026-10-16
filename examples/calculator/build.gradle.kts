@@ -8,7 +8,7 @@ kotlin {
     android {
         namespace = "com.example.calculator"
         compileSdk = 35
-        // NNA's test names have spaces: DEX supports them from Android 11 (the bridge itself runs from Android 10)
+        // The tests' names have spaces: DEX supports them from Android 11 (the bridge itself runs from Android 10)
         minSdk = 30
         withDeviceTestBuilder { sourceSetTreeName = "test" }.configure {
             instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

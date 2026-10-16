@@ -1,5 +1,7 @@
 package com.example.calculator
 
+import dev.nucleusframework.nja.JvmException
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -203,7 +205,7 @@ class FlowDataClassTest {
     @Test fun `flow dc - failingPointFlow throws after first`() = runBlocking<Unit> {
         Calculator(0).use { calc ->
             val items = mutableListOf<Point>()
-            assertFailsWith<KotlinNativeException> {
+            assertFailsWith<JvmException> {
                 calc.failingPointFlow().collect { items.add(it) }
             }
             assertEquals(listOf(Point(1, 2)), items)

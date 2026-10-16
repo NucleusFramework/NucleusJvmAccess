@@ -1,7 +1,7 @@
 package dev.nucleusframework.nja.plugin.analysis
 
-import dev.nucleusframework.nja.plugin.ir.KneParam
-import dev.nucleusframework.nja.plugin.ir.KneType
+import dev.nucleusframework.nja.plugin.ir.ApiParam
+import dev.nucleusframework.nja.plugin.ir.ApiType
 import java.io.Serializable
 
 /**
@@ -29,7 +29,7 @@ data class PrescanDecl(
 ) : Serializable
 
 /** Resolved data class: FQ name + resolved fields. */
-typealias ResolvedDataClass = Pair<String, List<KneParam>>
+typealias ResolvedDataClass = Pair<String, List<ApiParam>>
 
 /**
  * Everything the symbol table knows about a simple name. Per-file parse results record the
@@ -44,7 +44,7 @@ data class SymbolInfo(
     val isCommonDataClass: Boolean,
 ) : Serializable
 
-/** Name-based lookups used to resolve [TypeSyntax] into [KneType]. */
+/** Name-based lookups used to resolve [TypeSyntax] into [ApiType]. */
 interface TypeScope {
     fun enumFq(name: String): String?
     fun dataClass(name: String): ResolvedDataClass?
@@ -122,14 +122,14 @@ class SymbolTable private constructor(
             return SymbolTable(enums, dataClasses, interfaces, classes, commonDataClassNames)
         }
 
-        private fun resolveDataClassFields(params: List<DataParamSyntax>?, scope: TypeScope): List<KneParam>? {
+        private fun resolveDataClassFields(params: List<DataParamSyntax>?, scope: TypeScope): List<ApiParam>? {
             params ?: return null
-            val fields = mutableListOf<KneParam>()
+            val fields = mutableListOf<ApiParam>()
             for (param in params) {
                 if (!param.isProperty) continue
                 val name = param.name ?: return null
                 val type = TypeResolver.resolve(param.type, scope) ?: return null
-                fields.add(KneParam(name, type))
+                fields.add(ApiParam(name, type))
             }
             return fields.ifEmpty { null }
         }
@@ -157,49 +157,49 @@ class RecordingScope(private val table: SymbolTable) : TypeScope {
 object TypeResolver {
 
     private val CALLBACK_PRIMITIVES = setOf(
-        KneType.INT, KneType.LONG, KneType.DOUBLE, KneType.FLOAT,
-        KneType.BOOLEAN, KneType.BYTE, KneType.SHORT, KneType.STRING,
+        ApiType.INT, ApiType.LONG, ApiType.DOUBLE, ApiType.FLOAT,
+        ApiType.BOOLEAN, ApiType.BYTE, ApiType.SHORT, ApiType.STRING,
     )
 
-    fun resolve(type: TypeSyntax?, scope: TypeScope): KneType? {
+    fun resolve(type: TypeSyntax?, scope: TypeScope): ApiType? {
         if (type is TypeSyntax.Nullable) {
             val inner = resolveElement(type.inner, scope) ?: return null
-            return if (inner == KneType.UNIT || inner is KneType.NULLABLE) inner else KneType.NULLABLE(inner)
+            return if (inner == ApiType.UNIT || inner is ApiType.NULLABLE) inner else ApiType.NULLABLE(inner)
         }
         return resolveElement(type, scope)
     }
 
-    private fun resolveElement(type: TypeSyntax?, scope: TypeScope): KneType? = when (type) {
+    private fun resolveElement(type: TypeSyntax?, scope: TypeScope): ApiType? = when (type) {
         is TypeSyntax.Function -> resolveFunction(type, scope)
         is TypeSyntax.User -> resolveUser(type, scope)
         else -> null
     }
 
-    private fun resolveFunction(type: TypeSyntax.Function, scope: TypeScope): KneType? {
+    private fun resolveFunction(type: TypeSyntax.Function, scope: TypeScope): ApiType? {
         val paramTypes = type.params.mapNotNull { resolve(it, scope) }
-        val returnType = resolve(type.returnType, scope) ?: KneType.UNIT
-        fun ok(t: KneType) = t in CALLBACK_PRIMITIVES || t == KneType.BYTE_ARRAY || t is KneType.DATA_CLASS ||
-            t is KneType.ENUM || t is KneType.OBJECT || t is KneType.INTERFACE ||
-            t is KneType.LIST || t is KneType.SET || t is KneType.MAP
-        if (paramTypes.any { !ok(it) } || !(ok(returnType) || returnType == KneType.UNIT)) return null
-        return KneType.FUNCTION(paramTypes, returnType)
+        val returnType = resolve(type.returnType, scope) ?: ApiType.UNIT
+        fun ok(t: ApiType) = t in CALLBACK_PRIMITIVES || t == ApiType.BYTE_ARRAY || t is ApiType.DATA_CLASS ||
+            t is ApiType.ENUM || t is ApiType.OBJECT || t is ApiType.INTERFACE ||
+            t is ApiType.LIST || t is ApiType.SET || t is ApiType.MAP
+        if (paramTypes.any { !ok(it) } || !(ok(returnType) || returnType == ApiType.UNIT)) return null
+        return ApiType.FUNCTION(paramTypes, returnType)
     }
 
-    private fun resolveUser(type: TypeSyntax.User, scope: TypeScope): KneType? {
+    private fun resolveUser(type: TypeSyntax.User, scope: TypeScope): ApiType? {
         val name = type.name
         val typeArgs = type.args.mapNotNull { resolve(it, scope) }
         return when (name) {
-            "Int" -> KneType.INT; "Long" -> KneType.LONG; "Double" -> KneType.DOUBLE; "Float" -> KneType.FLOAT
-            "Boolean" -> KneType.BOOLEAN; "Byte" -> KneType.BYTE; "Short" -> KneType.SHORT
-            "String" -> KneType.STRING; "ByteArray" -> KneType.BYTE_ARRAY; "Unit" -> KneType.UNIT
-            "List", "MutableList" -> if (typeArgs.size == 1) KneType.LIST(typeArgs[0]) else null
-            "Set", "MutableSet" -> if (typeArgs.size == 1) KneType.SET(typeArgs[0]) else null
-            "Map", "MutableMap" -> if (typeArgs.size == 2) KneType.MAP(typeArgs[0], typeArgs[1]) else null
-            "Flow" -> if (typeArgs.size == 1) KneType.FLOW(typeArgs[0]) else null
-            else -> scope.enumFq(name)?.let { KneType.ENUM(it, name) }
-                ?: scope.dataClass(name)?.let { KneType.DATA_CLASS(it.first, name, it.second) }
-                ?: scope.interfaceFq(name)?.let { KneType.INTERFACE(it, name) }
-                ?: scope.classFq(name)?.let { KneType.OBJECT(it, name) }
+            "Int" -> ApiType.INT; "Long" -> ApiType.LONG; "Double" -> ApiType.DOUBLE; "Float" -> ApiType.FLOAT
+            "Boolean" -> ApiType.BOOLEAN; "Byte" -> ApiType.BYTE; "Short" -> ApiType.SHORT
+            "String" -> ApiType.STRING; "ByteArray" -> ApiType.BYTE_ARRAY; "Unit" -> ApiType.UNIT
+            "List", "MutableList" -> if (typeArgs.size == 1) ApiType.LIST(typeArgs[0]) else null
+            "Set", "MutableSet" -> if (typeArgs.size == 1) ApiType.SET(typeArgs[0]) else null
+            "Map", "MutableMap" -> if (typeArgs.size == 2) ApiType.MAP(typeArgs[0], typeArgs[1]) else null
+            "Flow" -> if (typeArgs.size == 1) ApiType.FLOW(typeArgs[0]) else null
+            else -> scope.enumFq(name)?.let { ApiType.ENUM(it, name) }
+                ?: scope.dataClass(name)?.let { ApiType.DATA_CLASS(it.first, name, it.second) }
+                ?: scope.interfaceFq(name)?.let { ApiType.INTERFACE(it, name) }
+                ?: scope.classFq(name)?.let { ApiType.OBJECT(it, name) }
         }
     }
 }
