@@ -1,5 +1,9 @@
 # Nucleus JVM Access
 
+> [!WARNING]
+> **Highly experimental.** This project is a proof of concept: its APIs, its Gradle plugins and the runtimes it relies
+> on can change at any time, and it may not be maintained. Don't depend on it for production apps.
+
 Use **Java libraries from Kotlin Multiplatform iOS and Android apps, on a real JVM** — [jdk-mobile](https://github.com/NucleusFramework/openjdk-mobile)'s
 OpenJDK 27 — running **in the app's own process**. The other way round from
 [Nucleus Native Access](https://github.com/NucleusFramework/NucleusNativeAccess): there, Kotlin/Native code used from the
