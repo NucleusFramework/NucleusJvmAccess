@@ -5,6 +5,7 @@ import com.android.build.api.variant.AndroidComponentsExtension
 import com.android.build.api.variant.HasDeviceTests
 import dev.nucleusframework.nja.plugin.tasks.NjaAndroidLinkTask
 import dev.nucleusframework.nja.plugin.tasks.NjaAndroidRuntimeTask
+import dev.nucleusframework.nja.plugin.tasks.PACKAGES_FILE
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
@@ -21,6 +22,7 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 import org.jetbrains.kotlin.gradle.plugin.mpp.Executable
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.TestExecutable
+import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
 import org.jetbrains.kotlin.konan.target.Family
 import org.jetbrains.kotlin.konan.target.KonanTarget
 import java.io.File
@@ -46,8 +48,9 @@ abstract class NjaExtension(private val project: Project) {
 }
 
 /**
- * Applied to a Kotlin Multiplatform module (Android and/or iOS): its common code gets the façades' proxies, and its
- * binaries the JVM: on Android HotSpot, in the app's process next to ART; on iOS Zero, linked into the app.
+ * Applied to a Kotlin Multiplatform module (Android, iOS, the JVM): its common code gets the façades' proxies, and its
+ * binaries the JVM: on Android HotSpot, in the app's process next to ART; on iOS Zero, linked into the app; on a JVM
+ * target the app's own JVM, the façades on its class path.
  */
 class NjaPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -72,6 +75,7 @@ class NjaPlugin : Plugin<Project> {
             kotlin.targets.withType(KotlinNativeTarget::class.java).configureEach {
                 if (konanTarget.family == Family.IOS) configureIos(project, extension, classPath.get(), this)
             }
+            kotlin.targets.withType(KotlinJvmTarget::class.java).configureEach { configureJvm(project, this, facades, clientSources.get()) }
         }
         listOf("com.android.kotlin.multiplatform.library", "com.android.application", "com.android.library").forEach { id ->
             project.pluginManager.withPlugin(id) { configureAndroid(project, extension, classPath.get()) }
@@ -137,6 +141,33 @@ class NjaPlugin : Plugin<Project> {
         val sdk = local.getProperty("sdk.dir") ?: System.getenv("ANDROID_HOME") ?: "${System.getProperty("user.home")}/Library/Android/sdk"
         return File(sdk, "ndk").listFiles()?.filter { it.isDirectory }?.maxByOrNull { it.name }?.path
             ?: throw IllegalStateException("NJA: no NDK found (set ANDROID_NDK_HOME)")
+    }
+
+    /**
+     * A JVM target runs the façades in its own JVM: they go on its runtime class path only (its code sees the proxies,
+     * not the façades), so the proxies need a package of their own, checked before it compiles.
+     */
+    private fun configureJvm(project: Project, target: KotlinJvmTarget, facades: Configuration, clientSources: Configuration) {
+        val main = target.compilations.getByName("main")
+        project.configurations.getByName(main.defaultSourceSet.runtimeOnlyConfigurationName).extendsFrom(facades)
+        // The client sources' directories (built by the façades' generation tasks)
+        val sourceDirs = project.files(clientSources)
+        val check = project.tasks.register("checkNja${target.name.replaceFirstChar(Char::uppercase)}ClientPackages") {
+            description = "Checks that the façades' proxies have packages of their own, apart from the façades'."
+            inputs.files(sourceDirs)
+            doLast {
+                for (file in sourceDirs.files.map { File(it, PACKAGES_FILE) }.filter { it.isFile }) {
+                    val packages = Properties().apply { file.reader().use { load(it) } }
+                    val client = packages.getProperty("client")
+                    val facade = packages.getProperty("facade").orEmpty().split(',').filter { it.isNotEmpty() }
+                    check(client !in facade) {
+                        "NJA: the proxies of a façade used on the JVM need a package of their own (both are on its class path): " +
+                            "set njaFacade.clientPackage, not $client"
+                    }
+                }
+            }
+        }
+        project.tasks.named(main.compileKotlinTaskName) { dependsOn(check) }
     }
 
     private fun configureIos(project: Project, extension: NjaExtension, classPath: Configuration, target: KotlinNativeTarget) {

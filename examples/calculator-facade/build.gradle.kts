@@ -10,6 +10,8 @@ kotlin {
 
 njaFacade {
     libName = "calculator"
+    // Apart from the façade's: the JVM target has both on its class path
+    clientPackage = "com.example.calculator.client"
 }
 
 dependencies {

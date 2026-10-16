@@ -89,7 +89,12 @@ abstract class GenerateNjaBridgesTask : DefaultTask() {
             val model = ApiModel(module)
             val clientPackage = parameters.clientPackage.get().ifEmpty { module.packages.firstOrNull().orEmpty() }
             write(parameters.serverDir.get().asFile, ServerGenerator(model, libName).generate())
-            write(parameters.clientDir.get().asFile, ClientGenerator(model, libName, clientPackage).generate())
+            // The packages, for a JVM consumer's check: its class path holds both the façade and the proxies
+            val packages = "client=$clientPackage\nfacade=${module.packages.joinToString(",")}\n"
+            write(
+                parameters.clientDir.get().asFile,
+                ClientGenerator(model, libName, clientPackage).generate() + (PACKAGES_FILE to packages),
+            )
             logger.lifecycle(
                 "nja: $libName: ${module.classes.size} classes, ${module.interfaces.size} interfaces, " +
                     "${module.dataClasses.size} data classes, ${module.enums.size} enums, ${model.members.size} members",
@@ -106,3 +111,6 @@ abstract class GenerateNjaBridgesTask : DefaultTask() {
         }
     }
 }
+
+/** The client sources' packages file: `client=<package>`, `facade=<package>,...`. */
+internal const val PACKAGES_FILE = "nja-packages.properties"

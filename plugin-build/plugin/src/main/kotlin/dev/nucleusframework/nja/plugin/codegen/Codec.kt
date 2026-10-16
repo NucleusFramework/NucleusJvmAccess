@@ -26,9 +26,14 @@ class Codec(private val model: ApiModel, private val side: Side) {
         ApiType.SHORT -> "$w.writeShort($value)"
         ApiType.STRING -> "$w.writeString($value)"
         ApiType.BYTE_ARRAY -> "$w.writeBytes($value)"
+        ApiType.INT_ARRAY -> "$w.writeInts($value)"
+        ApiType.LONG_ARRAY -> "$w.writeLongs($value)"
+        ApiType.FLOAT_ARRAY -> "$w.writeFloats($value)"
+        ApiType.DOUBLE_ARRAY -> "$w.writeDoubles($value)"
         ApiType.UNIT -> "Unit"
         is ApiType.ENUM -> "$w.writeInt($value.ordinal)"
         is ApiType.DATA_CLASS -> if (side == Side.CLIENT) "nja_write_${t.simpleName}($w, $value, njaS)" else "nja_write_${t.simpleName}($w, $value)"
+        is ApiType.SEALED_VALUE -> if (side == Side.CLIENT) "nja_write_${t.simpleName}($w, $value, njaS)" else "nja_write_${t.simpleName}($w, $value)"
         is ApiType.OBJECT, is ApiType.INTERFACE -> encodeObject(value, w, nullable = false)
         is ApiType.LIST -> "writeList($w, $value) { w$d, e$d -> ${encode(t.elementType, "e$d", "w$d", d + 1)} }"
         is ApiType.SET -> "writeList($w, $value) { w$d, e$d -> ${encode(t.elementType, "e$d", "w$d", d + 1)} }"
@@ -40,7 +45,8 @@ class Codec(private val model: ApiModel, private val side: Side) {
     }
 
     private fun encodeNullable(inner: ApiType, value: String, w: String, d: Int): String = when (inner) {
-        ApiType.STRING, ApiType.BYTE_ARRAY, is ApiType.LIST, is ApiType.SET, is ApiType.MAP -> encode(inner, value, w, d)
+        ApiType.STRING, ApiType.BYTE_ARRAY, ApiType.INT_ARRAY, ApiType.LONG_ARRAY, ApiType.FLOAT_ARRAY, ApiType.DOUBLE_ARRAY,
+        is ApiType.LIST, is ApiType.SET, is ApiType.MAP -> encode(inner, value, w, d)
         is ApiType.ENUM -> "$w.writeInt($value?.ordinal ?: -1)"
         is ApiType.OBJECT, is ApiType.INTERFACE -> encodeObject(value, w, nullable = true)
         is ApiType.FUNCTION -> encodeFunction(inner, value, w, d, nullable = true)
@@ -77,9 +83,14 @@ class Codec(private val model: ApiModel, private val side: Side) {
         ApiType.SHORT -> "$r.readShort()"
         ApiType.STRING -> "$r.readString()!!"
         ApiType.BYTE_ARRAY -> "$r.readBytes()!!"
+        ApiType.INT_ARRAY -> "$r.readInts()!!"
+        ApiType.LONG_ARRAY -> "$r.readLongs()!!"
+        ApiType.FLOAT_ARRAY -> "$r.readFloats()!!"
+        ApiType.DOUBLE_ARRAY -> "$r.readDoubles()!!"
         ApiType.UNIT -> "Unit"
         is ApiType.ENUM -> "${type(t)}.entries[$r.readInt()]"
         is ApiType.DATA_CLASS -> "nja_read_${t.simpleName}($r)"
+        is ApiType.SEALED_VALUE -> "nja_read_${t.simpleName}($r)"
         is ApiType.OBJECT, is ApiType.INTERFACE -> decodeObject(t, r, nullable = false)
         is ApiType.LIST -> "readList($r) { r$d -> ${decode(t.elementType, "r$d", d + 1)} }!!"
         is ApiType.SET -> "readSet($r) { r$d -> ${decode(t.elementType, "r$d", d + 1)} }!!"
@@ -92,6 +103,10 @@ class Codec(private val model: ApiModel, private val side: Side) {
     private fun decodeNullable(inner: ApiType, r: String, d: Int): String = when (inner) {
         ApiType.STRING -> "$r.readString()"
         ApiType.BYTE_ARRAY -> "$r.readBytes()"
+        ApiType.INT_ARRAY -> "$r.readInts()"
+        ApiType.LONG_ARRAY -> "$r.readLongs()"
+        ApiType.FLOAT_ARRAY -> "$r.readFloats()"
+        ApiType.DOUBLE_ARRAY -> "$r.readDoubles()"
         is ApiType.LIST -> "readList($r) { r$d -> ${decode(inner.elementType, "r$d", d + 1)} }"
         is ApiType.SET -> "readSet($r) { r$d -> ${decode(inner.elementType, "r$d", d + 1)} }"
         is ApiType.MAP -> "readMap($r, { r$d -> ${decode(inner.keyType, "r$d", d + 1)} }, { r$d -> ${decode(inner.valueType, "r$d", d + 1)} })"

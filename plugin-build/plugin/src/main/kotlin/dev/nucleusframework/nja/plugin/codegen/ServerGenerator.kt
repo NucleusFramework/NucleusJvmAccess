@@ -2,6 +2,7 @@ package dev.nucleusframework.nja.plugin.codegen
 
 import dev.nucleusframework.nja.plugin.ir.ApiFunction
 import dev.nucleusframework.nja.plugin.ir.ApiParam
+import dev.nucleusframework.nja.plugin.ir.ApiSealedValue
 import dev.nucleusframework.nja.plugin.ir.ApiType
 
 /**
@@ -147,6 +148,35 @@ class ServerGenerator(private val model: ApiModel, private val libName: String) 
             dc.fields.forEach { f -> appendLine("    ${esc(f.name)} = ${codec.decode(f.type, "r")},") }
             appendLine(")")
         }
+        for (v in model.module.sealedValues) appendSealedCodec(v)
+    }
+
+    // A sealed value: its case's index, then the case's fields
+    private fun StringBuilder.appendSealedCodec(v: ApiSealedValue) {
+        appendLine()
+        appendLine("internal fun nja_write_${v.simpleName}(w: WireWriter, value: ${v.fqName}) {")
+        appendLine("    when (value) {")
+        v.cases.forEachIndexed { i, case ->
+            appendLine("        is ${case.fqName} -> {")
+            appendLine("            w.writeInt($i)")
+            case.fields.forEach { f -> appendLine("            ${codec.encode(f.type, "value.${esc(f.name)}", "w")}") }
+            appendLine("        }")
+        }
+        appendLine("    }")
+        appendLine("}")
+        appendLine()
+        appendLine("internal fun nja_read_${v.simpleName}(r: WireReader): ${v.fqName} = when (val njaCase = r.readInt()) {")
+        v.cases.forEachIndexed { i, case ->
+            if (case.isObject) {
+                appendLine("    $i -> ${case.fqName}")
+            } else {
+                appendLine("    $i -> ${case.fqName}(")
+                case.fields.forEach { f -> appendLine("        ${esc(f.name)} = ${codec.decode(f.type, "r")},") }
+                appendLine("    )")
+            }
+        }
+        appendLine("    else -> throw IllegalStateException(\"NJA: unknown case \$njaCase of ${v.fqName}\")")
+        appendLine("}")
     }
 
     companion object {

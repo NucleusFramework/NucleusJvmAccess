@@ -11,6 +11,10 @@ kotlin {
         minSdk = 29
     }
 
+    // A JVM app (the desktop): the façades run in its own JVM (see Platform.jvm.kt)
+    jvm()
+    jvmToolchain(25)
+
     listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
         target.compilations.getByName("main").cinterops.create("jni") {
             definitionFile.set(project.file("src/nativeInterop/cinterop/jni.def"))
@@ -28,6 +32,10 @@ kotlin {
         commonMain.dependencies {
             api(libs.kotlinx.coroutines.core)
         }
+        jvmMain.dependencies {
+            // The dispatcher the façades run behind, in the app's JVM
+            implementation(project(":nja-server"))
+        }
     }
 }
 
@@ -35,7 +43,7 @@ mavenPublishing {
     coordinates("dev.nucleusframework.nja", project.name, project.version.toString())
     pom {
         name.set("Nucleus JVM Access client")
-        description.set("The part of Nucleus JVM Access running in the app (Android, iOS): starts the JVM and calls the façades")
+        description.set("The part of Nucleus JVM Access running in the app (Android, iOS, the JVM): starts the JVM and calls the façades")
         url.set("https://github.com/NucleusFramework/NucleusJvmAccess")
         licenses {
             license {

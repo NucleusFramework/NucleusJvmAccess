@@ -10,6 +10,7 @@ import dev.nucleusframework.nja.plugin.ir.ApiInterface
 import dev.nucleusframework.nja.plugin.ir.ApiModule
 import dev.nucleusframework.nja.plugin.ir.ApiParam
 import dev.nucleusframework.nja.plugin.ir.ApiProperty
+import dev.nucleusframework.nja.plugin.ir.ApiSealedValue
 import dev.nucleusframework.nja.plugin.ir.ApiSourceDecl
 import dev.nucleusframework.nja.plugin.ir.ApiType
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreApplicationEnvironment
@@ -135,7 +136,9 @@ class PsiSourceParser {
                 val name = decl.name ?: continue
                 val fq = if (parentFq != null) "$parentFq.$name"
                     else if (pkg.isNotEmpty()) "$pkg.$name" else name
+                val cases = sealedValueCases(decl)
                 when {
+                    cases != null -> decls += PrescanDecl(name, fq, DeclKind.SEALED_VALUE, cases = cases)
                     decl.isEnum() -> decls += PrescanDecl(name, fq, DeclKind.ENUM)
                     decl.isData() -> decls += PrescanDecl(name, fq, DeclKind.DATA_CLASS, dataParams(decl))
                     decl.isInterface() -> decls += PrescanDecl(name, fq, DeclKind.INTERFACE)
@@ -148,6 +151,24 @@ class PsiSourceParser {
         }
         visit(ktFile.declarations.toList(), null)
         return decls
+    }
+
+    /**
+     * The cases of a sealed value hierarchy: a sealed interface or class whose nested declarations are all data
+     * classes or objects (a companion aside), at least one; null for any other declaration.
+     */
+    private fun sealedValueCases(decl: KtClass): List<SealedCaseSyntax>? {
+        if (!decl.hasModifier(KtTokens.SEALED_KEYWORD)) return null
+        val cases = mutableListOf<SealedCaseSyntax>()
+        for (nested in decl.declarations) {
+            when {
+                nested is KtObjectDeclaration && nested.isCompanion() -> continue
+                nested is KtObjectDeclaration -> cases += SealedCaseSyntax(nested.name ?: return null, isObject = true, params = null)
+                nested is KtClass && nested.isData() -> cases += SealedCaseSyntax(nested.name ?: return null, isObject = false, params = dataParams(nested))
+                nested is KtClass -> return null
+            }
+        }
+        return cases.ifEmpty { null }
     }
 
     private fun dataParams(ktClass: KtClass): List<DataParamSyntax>? =
@@ -163,11 +184,16 @@ class PsiSourceParser {
         val enums = mutableListOf<ApiEnum>()
         val functions = mutableListOf<Pair<String, ApiFunction>>()
         val interfaces = mutableListOf<ApiInterface>()
+        val sealedValues = mutableListOf<ApiSealedValue>()
 
         fun processDeclarations(declarations: List<KtDeclaration>, parentSimpleName: String?, isTopLevel: Boolean) {
             for (decl in declarations) {
                 if (decl.isPrivateOrInternal()) continue
+                val sealed = (decl as? KtClass)?.name?.let { scope.sealedValue(it) }
                 when {
+                    decl is KtClass && sealed != null -> sealedValues += ApiSealedValue(
+                        decl.name!!, sealed.first, sealed.second, source = sourceDecl(decl, imports),
+                    )
                     decl is KtClass && decl.isEnum() -> parseEnum(decl, pkg, scope)
                         ?.copy(source = sourceDecl(decl, imports))
                         ?.let { enums += it }
@@ -211,7 +237,7 @@ class PsiSourceParser {
             }
         }
         processDeclarations(ktFile.declarations.toList(), null, true)
-        return FileFragment(pkg, classes, dataClasses, enums, functions, interfaces)
+        return FileFragment(pkg, classes, dataClasses, enums, functions, interfaces, sealedValues)
     }
 
     /** Merges per-file fragments in source order; the first declaration of a given FQ name wins. */
@@ -221,6 +247,7 @@ class PsiSourceParser {
         val enumMap = LinkedHashMap<String, ApiEnum>()
         val functionMap = LinkedHashMap<String, ApiFunction>()
         val interfaceMap = LinkedHashMap<String, ApiInterface>()
+        val sealedMap = LinkedHashMap<String, ApiSealedValue>()
         val packages = LinkedHashSet<String>()
 
         for (fragment in fragments) {
@@ -230,6 +257,7 @@ class PsiSourceParser {
             fragment.enums.forEach { enumMap.putIfAbsent(it.fqName, it) }
             fragment.functions.forEach { (key, fn) -> functionMap.putIfAbsent(key, fn) }
             fragment.interfaces.forEach { interfaceMap.putIfAbsent(it.fqName, it) }
+            fragment.sealedValues.forEach { sealedMap.putIfAbsent(it.fqName, it) }
         }
 
         // Ensure common data classes are present even if only defined in commonMain
@@ -240,7 +268,7 @@ class PsiSourceParser {
 
         return ApiModule(
             libName, packages, classMap.values.toList(), dataClassMap.values.toList(),
-            enumMap.values.toList(), functionMap.values.toList(), interfaceMap.values.toList(),
+            enumMap.values.toList(), functionMap.values.toList(), interfaceMap.values.toList(), sealedMap.values.toList(),
         )
     }
 
