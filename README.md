@@ -145,8 +145,43 @@ whose Android runtimes include the static libraries built with `inprocess.patch`
 ./scripts/stage-jdk-mobile.sh .jdk-mobile/stage --release jdk-mobile-27b35.3
 ```
 
-It downloads the four runtimes, checks their SHA-256 and lays them out. The patch NJA needs is in jdk-mobile's recipe
-(`inprocess.patch`); [`jdk-mobile/inprocess.patch`](jdk-mobile/inprocess.patch) is a copy of it.
+It downloads the four runtimes, checks their SHA-256 and lays them out.
+
+### How jdk-mobile is built
+
+[NucleusFramework/openjdk-mobile](https://github.com/NucleusFramework/openjdk-mobile) is a recipe, not a fork of the
+JDK: it builds a stable OpenJDK (the 27 line, from [openjdk/jdk27u](https://github.com/openjdk/jdk27u)'s GA releases)
+with two patches on top:
+
+- `openjdk-mobile.patch`: [openjdk/mobile](https://github.com/openjdk/mobile)'s iOS and Android ports, carried over to
+  the stable line, with the fixes they need there (Zero's W^X handling on iOS, bionic and an NDK build from a macOS host
+  on Android);
+- `inprocess.patch`: what NJA needs to run HotSpot inside an app's process on Android — the VM looks its natives up in
+  the shared library holding it (loaded `RTLD_LOCAL` by ART) rather than in the process' own handle.
+
+Its `build.sh` builds one target from an OpenJDK checkout: Zero (the interpreter) as static libraries for iOS, the
+server VM (C2 JIT) for Android — as static libraries, which NJA links into `libnja.so`, and as a launcher for apps that
+run Java in a process of its own. Its CI follows the JDK's line: every day, and on each change to the recipe, it builds
+the latest GA for the four targets, smoke-tests the Android runtime on an emulator and publishes a release named
+`jdk-mobile-<version>b<build>.<revision>` (`jdk-mobile-27b35.3`: JDK 27, its GA build 35, the recipe's third release
+on it).
+
+To build a runtime yourself (autoconf, a boot JDK 26 or 27; Xcode for iOS, the Android NDK for Android):
+
+```bash
+git clone https://github.com/NucleusFramework/openjdk-mobile.git
+```
+
+```bash
+git clone --depth 1 --branch jdk-27-ga https://github.com/openjdk/jdk27u.git jdk
+```
+
+```bash
+openjdk-mobile/build.sh android-aarch64 jdk   # or android-x64, ios-simulator, ios-device
+```
+
+The result (`dist/jdk-mobile-<target>.tar.gz`) has the release's layout; extract it into `<stage>/<target>` for
+`nucleusJvm.jdkMobile`. [`jdk-mobile/inprocess.patch`](jdk-mobile/inprocess.patch) is a copy of the recipe's.
 
 ## Layout
 
