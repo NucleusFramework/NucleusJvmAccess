@@ -9,7 +9,8 @@ import java.util.zip.ZipInputStream
 /**
  * The JVM (HotSpot, from jdk-mobile) in the app's process: libnja.so holds it and the bridge to ART (see
  * nja_android.c). Its runtime (java.home) and the façades' class path come with the app as assets, extracted once per
- * version into the app's files.
+ * version into the app's files. Or, when the app ships the asset `nja/native-image`, the façades compiled into a GraalVM
+ * native image: libnja.so holds it (see nja_android_graal.c), nothing to extract. Or neither, with the asset `nja/art`.
  */
 internal object AndroidJvm {
     private const val ASSETS = "nja"
@@ -22,9 +23,23 @@ internal object AndroidJvm {
 
     @JvmStatic external fun transact(message: ByteArray, length: Int): ByteArray
 
+    /** A native image calls one of the app's callbacks (on the thread of the call that passed it). */
+    @JvmStatic fun upcall(request: ByteArray): ByteArray = serveUpcall(request)
+
+    /** Whether the app runs the façades on ART (the asset `nja/art`): no JVM, no native image. */
+    fun onArt(): Boolean {
+        val context = context ?: error("NJA: no Android context (NjaInitializer didn't run)")
+        return context.assets.list(ASSETS)?.contains("art") == true
+    }
+
     fun start() {
         val context = context ?: error("NJA: no Android context (NjaInitializer didn't run)")
         val assets = context.assets
+        if (assets.list(ASSETS)?.contains("native-image") == true) {
+            System.loadLibrary("nja")
+            start("", "", "", emptyArray())?.let { throw IllegalStateException("NJA: the native image didn't start: $it") }
+            return
+        }
         val version = assets.open("$ASSETS/runtime.id").use { it.readBytes().decodeToString().trim() }
         val root = File(context.noBackupFilesDir, "nja/$version")
         if (!File(root, ".complete").exists()) {

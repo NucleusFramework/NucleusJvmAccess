@@ -5,6 +5,7 @@ import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
@@ -21,7 +22,8 @@ import java.util.zip.ZipOutputStream
 /**
  * The JVM's runtime as an Android app carries it, in its assets: `nja/runtime.zip` (each ABI's java.home under
  * `jdk/<abi>`, the façades' class path under `classpath/`, the JVM options) and `nja/runtime.id`, its hash, which
- * versions the copy the app extracts.
+ * versions the copy the app extracts. With [nativeImage], the façades are compiled into libnja.so: only the asset
+ * `nja/native-image`, which tells the app so; on ART (the façades dexed with the app), only `nja/art`.
  */
 @DisableCachingByDefault(because = "Zipping the runtime is cheaper than storing it in the cache")
 abstract class NjaAndroidRuntimeTask : DefaultTask() {
@@ -34,6 +36,8 @@ abstract class NjaAndroidRuntimeTask : DefaultTask() {
 
     @get:Classpath abstract val classPath: ConfigurableFileCollection
     @get:Input abstract val jvmOptions: ListProperty<String>
+    @get:Input abstract val nativeImage: Property<Boolean>
+    @get:Input abstract val art: Property<Boolean>
     @get:OutputDirectory abstract val outputDir: DirectoryProperty
 
     @TaskAction
@@ -41,6 +45,10 @@ abstract class NjaAndroidRuntimeTask : DefaultTask() {
         val out = outputDir.get().asFile.resolve("nja")
         out.deleteRecursively()
         out.mkdirs()
+        if (nativeImage.get() || art.get()) {
+            out.resolve(if (art.get()) "art" else "native-image").writeText("")
+            return
+        }
         val digest = MessageDigest.getInstance("SHA-256")
         ZipOutputStream(out.resolve("runtime.zip").outputStream().buffered()).use { zip ->
             fun add(name: String, file: File) {

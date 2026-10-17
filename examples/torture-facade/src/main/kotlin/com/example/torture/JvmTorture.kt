@@ -20,7 +20,7 @@ class JvmTorture {
     private var holder: Any? = null
 
     fun vm(): VmInfo = VmInfo(
-        System.getProperty("java.vm.name"), Runtime.version().toString(), System.getProperty("os.name"),
+        System.getProperty("java.vm.name"), System.getProperty("java.version").orEmpty(), System.getProperty("os.name"),
         System.getProperty("os.arch"), Runtime.getRuntime().availableProcessors(),
     )
 

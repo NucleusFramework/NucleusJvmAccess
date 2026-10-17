@@ -206,6 +206,52 @@ openjdk-mobile/build.sh android-aarch64 jdk   # or android-x64, ios-simulator, i
 The result (`dist/jdk-mobile-<target>.tar.gz`) has the release's layout; extract it into `<stage>/<target>` for
 `nucleusJvm.jdkMobile`. [`jdk-mobile/inprocess.patch`](jdk-mobile/inprocess.patch) is a copy of the recipe's.
 
+## Runtimes
+
+What runs the façades is chosen per platform: `runtime` (both), `iosRuntime`, `androidRuntime`
+(`import dev.nucleusframework.nja.plugin.NjaRuntimeType`).
+
+| `NjaRuntimeType` | iOS | Android | The plugin downloads |
+|---|---|---|---|
+| `JVM` (default) | Zero, linked into the app | HotSpot in the app's process (Android 10+) | jdk-mobile's runtimes |
+| `GRAALVM` | the façades' native image | the façades' native image (Android 10+, built on Linux) | graalvm-mobile's kit, GraalVM CE |
+| `ART` | – (iOS keeps `JVM`) | the façades dexed with the app, on ART itself | nothing |
+
+`ART` is for Java libraries ART runs as they are, whose module targets iOS through NJA: the façades and NJA's server
+become the app's own dependencies, called in process like on a JVM target; no runtime in the app, and the app's own
+`minSdk`.
+
+## GraalVM native images
+
+Instead of jdk-mobile's JVM, the façades can run compiled ahead of time into a GraalVM native image, linked into the
+app: no interpreter on iOS (Zero runs searches 100× slower than an image), no JIT nor class metadata on Android.
+
+```kotlin
+nucleusJvm {
+    runtime = NjaRuntimeType.GRAALVM            // iOS and Android; default: NjaRuntimeType.JVM
+    androidRuntime = NjaRuntimeType.JVM         // or per platform (iosRuntime, androidRuntime)
+    graalvmMobileRelease = "graalvm-mobile-25.4.4.1.1b1.1"  // default: latest
+    nativeImageOptions.add("-H:+ReportExceptionStackTraces")
+}
+```
+
+(`import dev.nucleusframework.nja.plugin.NjaRuntimeType` in the build script.) The plugin downloads, into Gradle's
+cache, [graalvm-mobile](https://github.com/NucleusFramework/graalvm-mobile)'s kit for each target (GraalVM CE's static
+libraries for iOS and Android, rebuilt by its CI for each GraalVM CE release) and the GraalVM CE release it is for, for
+the build host; `njaNativeImage<Target>` compiles the façades with it into an object, which the iOS binaries and
+Android's `libnja.so` link. The app's code doesn't change: the client finds the image's entry points at run time.
+
+- **Reachability metadata**: libraries reaching classes by reflection or resources bring their native-image metadata
+  in their jars (`META-INF/native-image/<group>/<artifact>/reachability-metadata.json`), as GraalVM's own
+  [reachability metadata](https://www.graalvm.org/latest/reference-manual/native-image/metadata/) requires; trace it
+  with the native-image agent on a JVM (`-agentlib:native-image-agent=config-output-dir=...`). NJA's dispatchers need
+  none.
+- **Options**: `jvmOptions`' `-Xmx` becomes the image's maximum heap (`-R:MaxHeapSize`), its `-D` system properties
+  are kept; `nativeImageOptions` go to native-image as they are.
+- **Android**: arm64 and x86_64 (the emulators). native-image compiles its host's Java classes, so an Android image
+  builds on Linux only (a CI); on macOS, keep `androidRuntime = NjaRuntimeType.JVM` for local builds. GraalVM has no FFM
+  API (`java.lang.foreign`) for Android: the libraries must do without it.
+
 ## Layout
 
 - `plugin-build/` — the Gradle plugins (`dev.nucleusframework.nja.facade`, `dev.nucleusframework.nja`): PSI analysis,

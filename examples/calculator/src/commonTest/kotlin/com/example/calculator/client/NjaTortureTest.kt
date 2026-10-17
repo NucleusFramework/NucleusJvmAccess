@@ -39,7 +39,11 @@ class NjaTortureTest {
         if (host != null) {
             // A JVM target: the façades run in the tests' own JVM
             assertEquals(host, vm.version, "$vm")
-        } else {
+        } else if (vm.name.contains("Substrate")) {
+            // A GraalVM native image (GraalVM CE 25)
+            assertTrue(vm.version.startsWith("25"), "$vm")
+        } else if (!vm.name.contains("Dalvik")) {
+            // jdk-mobile's JVM (on ART, the façades run as they are)
             assertTrue(vm.version.startsWith("27"), "$vm")
             assertTrue(vm.name.contains("Server") || vm.name.contains("Zero"), "$vm")
         }

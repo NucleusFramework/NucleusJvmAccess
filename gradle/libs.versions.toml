@@ -6,8 +6,10 @@ androidx-test-runner = "1.7.0"
 androidx-test-core = "1.7.0"
 vanniktech-publish = "0.37.0"
 plugin-publish = "2.1.0"
+graalvm = "25.0.4"
 
 [libraries]
+graalvm-nativeimage = { module = "org.graalvm.sdk:nativeimage", version.ref = "graalvm" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 kotlin-compiler-embeddable = { module = "org.jetbrains.kotlin:kotlin-compiler-embeddable", version.ref = "kotlin" }
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }

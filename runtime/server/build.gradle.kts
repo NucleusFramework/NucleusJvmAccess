@@ -10,6 +10,8 @@ kotlin {
 
 dependencies {
     api(libs.kotlinx.coroutines.core)
+    // GraalLink: only a native image loads it, which has the API
+    compileOnly(libs.graalvm.nativeimage)
 }
 
 mavenPublishing {

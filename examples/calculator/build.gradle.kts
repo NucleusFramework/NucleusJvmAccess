@@ -43,4 +43,8 @@ nucleusJvm {
     // A second façade in the same JVM: NJA's own stress tests
     facade(project(":examples:torture-facade"))
     jvmOptions.addAll("-Xss2m", "-Xmx512m")
+    // The same suites on a GraalVM native image: -Pnja.runtime=GRAALVM
+    providers.gradleProperty("nja.runtime").orNull?.let { runtime.set(dev.nucleusframework.nja.plugin.NjaRuntimeType.valueOf(it)) }
+    // -Pnja.androidAbis=arm64-v8a,x86_64
+    providers.gradleProperty("nja.androidAbis").orNull?.let { androidAbis.set(it.split(',').toSet()) }
 }
