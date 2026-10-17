@@ -229,3 +229,19 @@ object NjaRuntime {
     fun stats(): Triple<Int, Int, String> =
         call(Protocol.RUNTIME_MODULE, Protocol.STATS, { _, _ -> }) { r, _ -> Triple(r.readInt(), r.readInt(), r.readString()!!) }
 }
+
+/**
+ * A callback's request, served by the app: its answer, or the exception it threw, encoded. For the runtimes calling the
+ * app back on the thread of the call (JNI, native images).
+ */
+internal fun serveUpcall(request: ByteArray): ByteArray =
+    try {
+        NjaRuntime.serveCallback(request)
+    } catch (t: Throwable) {
+        val output = WireWriter(64)
+        output.writeByte(Protocol.CALLBACK_THROW)
+        output.writeLong(0)
+        output.writeString(className(t))
+        output.writeString(t.message)
+        output.toByteArray()
+    }

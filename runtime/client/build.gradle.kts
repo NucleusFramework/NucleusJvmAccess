@@ -8,7 +8,15 @@ kotlin {
     android {
         namespace = "dev.nucleusframework.nja"
         compileSdk = 35
-        minSdk = 29
+        // The façades on ART run as far back as the app; HotSpot and native images need their own (Android 10)
+        minSdk = 21
+        // ART's transport reaches the server by name
+        optimization {
+            consumerKeepRules.apply {
+                publish = true
+                file("consumer-rules.pro")
+            }
+        }
     }
 
     // A JVM app (the desktop): the façades run in its own JVM (see Platform.jvm.kt)

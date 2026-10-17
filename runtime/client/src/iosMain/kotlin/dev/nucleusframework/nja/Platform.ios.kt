@@ -4,7 +4,6 @@ package dev.nucleusframework.nja
 
 import dev.nucleusframework.nja.jni.JNIEnvVar
 import dev.nucleusframework.nja.jni.JNINativeMethod
-import dev.nucleusframework.nja.jni.JNI_CreateJavaVM
 import dev.nucleusframework.nja.jni.JNI_OK
 import dev.nucleusframework.nja.jni.JNI_VERSION_21
 import dev.nucleusframework.nja.jni.JavaVMInitArgs
@@ -15,9 +14,16 @@ import dev.nucleusframework.nja.jni.jclass
 import dev.nucleusframework.nja.jni.jmethodID
 import dev.nucleusframework.nja.jni.jvalue
 import dev.nucleusframework.nja.jni.nja_attach_current_thread
+import dev.nucleusframework.nja.jni.nja_create_java_vm
+import dev.nucleusframework.nja.jni.nja_graal_available
+import dev.nucleusframework.nja.jni.nja_graal_call
+import dev.nucleusframework.nja.jni.nja_graal_start
 import kotlinx.cinterop.COpaquePointerVar
 import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.IntVar
+import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
@@ -37,6 +43,9 @@ import platform.Foundation.NSRecursiveLock
 import platform.Foundation.NSString
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.stringWithContentsOfFile
+import platform.posix.free
+import platform.posix.malloc
+import platform.posix.memcpy
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.native.concurrent.ObsoleteWorkersApi
 import kotlin.native.concurrent.ThreadLocal
@@ -66,7 +75,38 @@ internal actual fun startDaemon(name: String, body: () -> Unit) {
 
 internal actual fun createCleaner(ref: JvmRef): Any = createCleaner(ref) { it.close() }
 
-internal actual fun startTransport(): Transport = IosJvm.apply { start() }
+internal actual fun startTransport(): Transport = if (nja_graal_available() != 0) IosGraal.apply { start() } else IosJvm.apply { start() }
+
+/**
+ * The façades compiled into a GraalVM native image, linked into the app: the app's threads call its entry points,
+ * attached to its isolate on their first call, and it calls the app back on the same thread.
+ */
+private object IosGraal : Transport {
+    fun start() {
+        val result = nja_graal_start(staticCFunction(::graalUpcall))
+        check(result == 0) { "NJA: the native image's isolate failed to start: $result" }
+    }
+
+    override fun transact(message: ByteArray, length: Int): ByteArray = memScoped {
+        val replyLength = alloc<IntVar>()
+        val reply = message.usePinned { nja_graal_call(if (length > 0) it.addressOf(0) else null, length, replyLength.ptr) }
+            ?: error("NJA: can't attach this thread to the native image")
+        try {
+            reply.reinterpret<ByteVar>().readBytes(replyLength.value)
+        } finally {
+            free(reply)
+        }
+    }
+}
+
+/** The native image calls one of the app's callbacks: [request] is the image's (it frees it), the answer the app's. */
+private fun graalUpcall(request: CPointer<ByteVar>?, length: Int, answerLength: CPointer<IntVar>?): CPointer<ByteVar>? {
+    val answer = serveUpcall(if (length > 0) request!!.readBytes(length) else ByteArray(0))
+    answerLength!!.pointed.value = answer.size
+    val buffer = malloc(maxOf(answer.size, 1).toULong())!!.reinterpret<ByteVar>()
+    if (answer.isNotEmpty()) answer.usePinned { memcpy(buffer, it.addressOf(0), answer.size.toULong()) }
+    return buffer
+}
 
 /**
  * The JVM (jdk-mobile's Zero, linked into the app) in the app's process: the app's threads call it through JNI,
@@ -97,7 +137,7 @@ private object IosJvm : Transport {
             args.ignoreUnrecognized = 0u
             val vmOut = alloc<kotlinx.cinterop.CPointerVar<JavaVMVar>>()
             val envOut = alloc<COpaquePointerVar>()
-            val result = JNI_CreateJavaVM(vmOut.ptr, envOut.ptr, args.ptr)
+            val result = nja_create_java_vm(vmOut.ptr, envOut.ptr, args.ptr)
             check(result == JNI_OK) { "NJA: JNI_CreateJavaVM failed: $result" }
             vm = vmOut.value
             val env: CPointer<JNIEnvVar> = envOut.value!!.reinterpret()
@@ -173,16 +213,7 @@ private fun toByteArray(env: CPointer<JNIEnvVar>, array: jbyteArray?): ByteArray
 private fun upcall(env: CPointer<JNIEnvVar>?, @Suppress("UNUSED_PARAMETER") cls: jclass?, request: jbyteArray?): jbyteArray? {
     val e = env!!
     val fns = e.pointed.value!!.pointed
-    val answer = try {
-        NjaRuntime.serveCallback(toByteArray(e, request))
-    } catch (t: Throwable) {
-        val output = WireWriter(64)
-        output.writeByte(Protocol.CALLBACK_THROW)
-        output.writeLong(0)
-        output.writeString(className(t))
-        output.writeString(t.message)
-        output.toByteArray()
-    }
+    val answer = serveUpcall(toByteArray(e, request))
     val result = fns.NewByteArray!!(e, answer.size)
     if (answer.isNotEmpty()) answer.usePinned { fns.SetByteArrayRegion!!(e, result, 0, answer.size, it.addressOf(0)) }
     return result

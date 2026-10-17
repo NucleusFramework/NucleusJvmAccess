@@ -30,7 +30,7 @@ internal actual fun platformGc() {
 
 internal actual fun platformGetenv(name: String): String? = java.lang.System.getenv(name)
 
-internal actual fun hostJvmVersion(): String? = Runtime.version().toString()
+internal actual fun hostJvmVersion(): String? = java.lang.System.getProperty("java.version")
 
 private val missing: String? get() = java.lang.System.getProperty("nja.missing.property")
 

@@ -134,7 +134,7 @@ object NjaServer {
             Protocol.STATS -> {
                 output.writeInt(Handles.size)
                 output.writeInt(NjaAsync.pending)
-                output.writeString(System.getProperty("java.vm.name") + " " + Runtime.version())
+                output.writeString(System.getProperty("java.vm.name") + " " + System.getProperty("java.version"))
             }
             else -> throw IllegalStateException("NJA: unknown runtime member $member")
         }

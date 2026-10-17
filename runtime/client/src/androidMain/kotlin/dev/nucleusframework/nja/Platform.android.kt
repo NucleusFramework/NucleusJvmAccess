@@ -48,8 +48,30 @@ private object ProxyCleaner {
 internal actual fun createCleaner(ref: JvmRef): Any = ProxyCleaner.register(ref)
 
 internal actual fun startTransport(): Transport {
+    if (AndroidJvm.onArt()) return ArtTransport
     AndroidJvm.start()
     return AndroidTransport
+}
+
+/**
+ * The façades on ART itself (the app's own dependencies, dexed with it), as on a JVM target: a call is a plain call into
+ * the server's dispatcher on the calling thread. The server is the app's dependency, not the client's: reached by name.
+ */
+private object ArtTransport : Transport {
+    private val server = Class.forName("dev.nucleusframework.nja.server.NjaServer")
+    private val linkClass = Class.forName("dev.nucleusframework.nja.server.Link")
+    private val handle = server.getMethod("handle", ByteArray::class.java, linkClass)
+    private val link = java.lang.reflect.Proxy.newProxyInstance(linkClass.classLoader, arrayOf(linkClass)) { proxy, method, args ->
+        when (method.name) {
+            "exchange" -> NjaRuntime.serveCallback(args!![0] as ByteArray)
+            "hashCode" -> System.identityHashCode(proxy)
+            "equals" -> proxy === args!![0]
+            else -> "NjaLink"
+        }
+    }
+
+    override fun transact(message: ByteArray, length: Int): ByteArray =
+        handle.invoke(null, if (length == message.size) message else message.copyOf(length), link) as ByteArray
 }
 
 /** One round trip per message: the JVM's callbacks come back as answers, served here until the reply. */

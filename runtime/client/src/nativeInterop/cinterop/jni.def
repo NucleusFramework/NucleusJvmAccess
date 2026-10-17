@@ -1,11 +1,13 @@
-# JNI (the JVM's invocation API and JNIEnv), from jdk-mobile's headers. The JVM itself (libjvm.a and the JDK's
-# natives) is linked into the app's binary by the NJA Gradle plugin.
+# JNI (the JVM's invocation API and JNIEnv), from jdk-mobile's headers, and a GraalVM native image's entry points. The
+# runtime (jdk-mobile's JVM or the façades' native image) is linked into the app's binary by the NJA Gradle plugin; its
+# entry points are looked up at run time, so that the binary links with either.
 package = dev.nucleusframework.nja.jni
 headers = jni.h
 headerFilter = jni.h jni_md.h
 noStringConversion = NewStringUTF GetStringUTFChars
 
 ---
+#include <dlfcn.h>
 
 /*
  * A thread attached to the JVM detaches when it ends. Not from a pthread key destructor: Darwin frees the threads'
@@ -27,4 +29,63 @@ static JNIEnv* nja_attach_current_thread(JavaVM* vm, const char* name) {
     if ((*vm)->AttachCurrentThreadAsDaemon(vm, (void**)&env, &args) != JNI_OK) return NULL;
     _tlv_atexit(nja_detach, vm);
     return env;
+}
+
+typedef jint (*nja_create_vm_fn)(JavaVM**, void**, void*);
+
+/* JNI_CreateJavaVM, when the JVM is linked in; JNI_ERR otherwise */
+static jint nja_create_java_vm(JavaVM** vm, void** env, void* args) {
+    nja_create_vm_fn create = (nja_create_vm_fn)dlsym(RTLD_DEFAULT, "JNI_CreateJavaVM");
+    return create ? create(vm, env, args) : JNI_ERR;
+}
+
+/* A GraalVM native image (graal_isolate.h's API and NJA's entry points), when one is linked in */
+typedef int (*nja_graal_create_isolate_fn)(void*, void**, void**);
+typedef int (*nja_graal_attach_thread_fn)(void*, void**);
+typedef void* (*nja_graal_get_current_thread_fn)(void*);
+typedef int (*nja_graal_detach_thread_fn)(void*);
+typedef void* (*nja_graal_dispatch_fn)(void*, const void*, int, int*);
+typedef void (*nja_graal_set_upcall_fn)(void*, void*);
+
+static void* nja_graal_isolate;
+static nja_graal_dispatch_fn nja_graal_dispatch_entry;
+
+static int nja_graal_available(void) {
+    return dlsym(RTLD_DEFAULT, "nja_graal_dispatch") != NULL;
+}
+
+static void nja_graal_detach(void* thread) {
+    nja_graal_detach_thread_fn detach = (nja_graal_detach_thread_fn)dlsym(RTLD_DEFAULT, "graal_detach_thread");
+    if (detach) detach(thread);
+}
+
+/* The calling thread's isolate thread, attaching it (detached when it exits) on its first call; NULL on failure */
+static void* nja_graal_thread(void) {
+    nja_graal_get_current_thread_fn current = (nja_graal_get_current_thread_fn)dlsym(RTLD_DEFAULT, "graal_get_current_thread");
+    void* thread = current(nja_graal_isolate);
+    if (thread) return thread;
+    nja_graal_attach_thread_fn attach = (nja_graal_attach_thread_fn)dlsym(RTLD_DEFAULT, "graal_attach_thread");
+    if (attach(nja_graal_isolate, &thread) != 0) return NULL;
+    _tlv_atexit(nja_graal_detach, thread);
+    return thread;
+}
+
+/* Creates the isolate (the calling thread attached to it) and gives it the app's callback entry; 0 on success */
+static int nja_graal_start(void* upcall) {
+    nja_graal_create_isolate_fn create = (nja_graal_create_isolate_fn)dlsym(RTLD_DEFAULT, "graal_create_isolate");
+    nja_graal_set_upcall_fn set_upcall = (nja_graal_set_upcall_fn)dlsym(RTLD_DEFAULT, "nja_graal_set_upcall");
+    nja_graal_dispatch_entry = (nja_graal_dispatch_fn)dlsym(RTLD_DEFAULT, "nja_graal_dispatch");
+    if (!create || !set_upcall || !nja_graal_dispatch_entry) return -1;
+    void* thread = NULL;
+    int result = create(NULL, &nja_graal_isolate, &thread);
+    if (result != 0) return result;
+    set_upcall(thread, upcall);
+    return 0;
+}
+
+/* Serves a call on the calling thread: the reply (to free), its length in reply_length; NULL if it can't attach */
+static void* nja_graal_call(const void* message, int length, int* reply_length) {
+    void* thread = nja_graal_thread();
+    if (!thread) return NULL;
+    return nja_graal_dispatch_entry(thread, message, length, reply_length);
 }

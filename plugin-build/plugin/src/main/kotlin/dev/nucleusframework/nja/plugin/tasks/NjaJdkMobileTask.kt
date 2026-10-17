@@ -19,9 +19,11 @@ import java.util.Properties
 import javax.inject.Inject
 
 /**
- * jdk-mobile's runtime for [target] (`android-aarch64`, `ios-simulator-aarch64`...), from a release of [repository]:
+ * A mobile runtime for [target] (`android-aarch64`, `ios-simulator-aarch64`...), from a release of [repository]:
  * [release] (`latest` by default), its archive checked against the `.sha256` published with it, kept in Gradle's cache
- * ([cacheDir]) and extracted into [outputDir] in the layout the plugin reads (`static/`, `include/`, `lib/`).
+ * ([cacheDir]) and extracted into [outputDir]. [product] names the releases: `jdk-mobile` (the JVM: `static/`,
+ * `include/`, `lib/`) or `graalvm-mobile` (a native image's static libraries: `lib/`, `include/`,
+ * `graalvm-mobile.properties`).
  *
  * `latest` is resolved through the release page's redirect (no API, no rate limit) and kept a day; offline, the last
  * one resolved.
@@ -31,6 +33,7 @@ abstract class NjaJdkMobileTask : DefaultTask() {
     @get:Inject abstract val archives: ArchiveOperations
     @get:Inject abstract val files: FileSystemOperations
 
+    @get:Input abstract val product: Property<String>
     @get:Input abstract val repository: Property<String>
     @get:Input abstract val release: Property<String>
     @get:Input abstract val target: Property<String>
@@ -39,6 +42,7 @@ abstract class NjaJdkMobileTask : DefaultTask() {
     @get:OutputDirectory abstract val outputDir: DirectoryProperty
 
     init {
+        product.convention(JDK_MOBILE)
         // latest may have moved: checked every build (cheaply: the resolution is cached, the archive too)
         outputs.upToDateWhen { false }
     }
@@ -47,7 +51,7 @@ abstract class NjaJdkMobileTask : DefaultTask() {
     fun stage() {
         val repo = repository.get()
         val tag = resolve(repo, release.get())
-        val asset = assetName(tag, target.get())
+        val asset = assetName(product.get(), tag, target.get())
         val out = outputDir.get().asFile
         val marker = File(out, ".nja-release")
         if (marker.isFile && marker.readText() == "$repo $tag") return
@@ -70,7 +74,7 @@ abstract class NjaJdkMobileTask : DefaultTask() {
         val knownTag = known.getProperty("tag")
         val fresh = System.currentTimeMillis() - (known.getProperty("at")?.toLongOrNull() ?: 0L) < DAY_MILLIS
         if (knownTag != null && (fresh || offline.get())) return knownTag
-        if (offline.get()) throw GradleException("NJA: offline, and $repo's latest jdk-mobile release was never resolved")
+        if (offline.get()) throw GradleException("NJA: offline, and $repo's latest release was never resolved")
         val tag = try {
             latestTag(repo)
         } catch (e: Exception) {
@@ -141,13 +145,15 @@ abstract class NjaJdkMobileTask : DefaultTask() {
 
     companion object {
         const val LATEST = "latest"
+        const val JDK_MOBILE = "jdk-mobile"
+        const val GRAALVM_MOBILE = "graalvm-mobile"
         private const val DAY_MILLIS = 24L * 60 * 60 * 1000
 
-        /** jdk-mobile-<version>b<build>.<revision> -> jdk-mobile-<version>-<target>-b<build>.<revision>.tar.gz */
-        fun assetName(tag: String, target: String): String {
-            val match = Regex("^jdk-mobile-(.+?)b([0-9]+\\.[0-9]+)$").matchEntire(tag)
-                ?: throw GradleException("NJA: $tag isn't a jdk-mobile release (jdk-mobile-<version>b<build>.<revision>)")
-            return "jdk-mobile-${match.groupValues[1]}-$target-b${match.groupValues[2]}.tar.gz"
+        /** <product>-<version>b<build>.<revision> -> <product>-<version>-<target>-b<build>.<revision>.tar.gz */
+        fun assetName(product: String, tag: String, target: String): String {
+            val match = Regex("^${Regex.escape(product)}-(.+?)b([0-9]+\\.[0-9]+)$").matchEntire(tag)
+                ?: throw GradleException("NJA: $tag isn't a $product release ($product-<version>b<build>.<revision>)")
+            return "$product-${match.groupValues[1]}-$target-b${match.groupValues[2]}.tar.gz"
         }
     }
 }
