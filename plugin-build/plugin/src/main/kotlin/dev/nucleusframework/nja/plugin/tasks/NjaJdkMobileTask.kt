@@ -54,7 +54,7 @@ abstract class NjaJdkMobileTask : DefaultTask() {
         val asset = assetName(product.get(), tag, target.get())
         val out = outputDir.get().asFile
         val marker = File(out, ".nja-release")
-        if (marker.isFile && marker.readText() == "$repo $tag") return
+        if (marker.isFile && marker.readText() == "$repo $tag") return keepToolsExecutable(out)
 
         val archive = download(repo, tag, asset)
         files.sync {
@@ -63,8 +63,14 @@ abstract class NjaJdkMobileTask : DefaultTask() {
             // jdk-mobile's files are read-only: the next sync must be able to replace them
             filePermissions { user { read = true; write = true } }
         }
+        keepToolsExecutable(out)
         marker.writeText("$repo $tag")
         logger.lifecycle("nja: ${target.get()} from $repo $tag")
+    }
+
+    // The sync's permissions drop the archive's own: its tools (graalvm-mobile's bin/android-cc) must stay executable
+    private fun keepToolsExecutable(out: File) {
+        File(out, "bin").listFiles()?.forEach { it.setExecutable(true) }
     }
 
     private fun resolve(repo: String, release: String): String {
