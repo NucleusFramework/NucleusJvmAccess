@@ -5,6 +5,7 @@ import com.android.build.api.variant.AndroidComponentsExtension
 import com.android.build.api.variant.HasDeviceTests
 import dev.nucleusframework.nja.plugin.tasks.NjaAndroidLinkTask
 import dev.nucleusframework.nja.plugin.tasks.NjaAndroidRuntimeTask
+import dev.nucleusframework.nja.plugin.tasks.NjaJdkMobileTask
 import dev.nucleusframework.nja.plugin.tasks.PACKAGES_FILE
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -15,8 +16,10 @@ import org.gradle.api.attributes.Usage
 import org.gradle.api.attributes.java.TargetJvmEnvironment
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Copy
+import org.gradle.api.tasks.TaskProvider
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 import org.jetbrains.kotlin.gradle.plugin.mpp.Executable
@@ -30,8 +33,18 @@ import java.util.Properties
 
 abstract class NjaExtension(private val project: Project) {
     /**
+     * The jdk-mobile release the runtimes come from: `latest` (the default) or a tag (`jdk-mobile-27b35.3`), downloaded
+     * from [jdkMobileRepository]'s releases, checked against their `.sha256` and kept in Gradle's cache.
+     */
+    abstract val jdkMobileRelease: Property<String>
+
+    /** The GitHub repository of jdk-mobile's releases. */
+    abstract val jdkMobileRepository: Property<String>
+
+    /**
      * jdk-mobile's runtimes, one directory per target (`android-aarch64`, `android-x64`, `ios-simulator-aarch64`,
-     * `ios-device-aarch64`), each with `static/` (the VM and the JDK's natives), `include/` and `lib/` (java.home).
+     * `ios-device-aarch64`), each with `static/` (the VM and the JDK's natives), `include/` and `lib/` (java.home). By
+     * default the ones of [jdkMobileRelease], downloaded; set, a runtime of one's own, as it is.
      */
     abstract val jdkMobile: DirectoryProperty
 
@@ -57,6 +70,25 @@ class NjaPlugin : Plugin<Project> {
         val extension = project.extensions.create("nucleusJvm", NjaExtension::class.java, project)
         extension.androidAbis.convention(setOf("arm64-v8a"))
         extension.jvmOptions.convention(emptyList())
+        extension.jdkMobileRelease.convention(NjaJdkMobileTask.LATEST)
+        extension.jdkMobileRepository.convention("NucleusFramework/openjdk-mobile")
+        val staged = project.layout.buildDirectory.dir("nja/jdkMobile")
+        extension.jdkMobile.convention(staged)
+        // One task per runtime, which the tasks reading it depend on: they download only when jdkMobile is the default
+        val stagedPath = staged.map { it.asFile.path }
+        val jdkMobileTasks = JDK_MOBILE_TARGETS.associateWith { target ->
+            project.tasks.register("njaJdkMobile${target.split('-').joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }}", NjaJdkMobileTask::class.java) {
+                description = "Downloads and extracts jdk-mobile's runtime for $target."
+                repository.set(extension.jdkMobileRepository)
+                release.set(extension.jdkMobileRelease)
+                this.target.set(target)
+                cacheDir.set(project.gradle.gradleUserHomeDir.resolve("caches/nja/jdk-mobile"))
+                offline.set(project.gradle.startParameter.isOffline)
+                outputDir.set(staged.map { it.dir(target) })
+                val chosen = extension.jdkMobile.map { it.asFile.path }
+                onlyIf("jdkMobile is the default (else a runtime of one's own)") { chosen.get() == stagedPath.get() }
+            }
+        }
 
         val facades = project.configurations.dependencyScope(FACADES).get()
         val clientSources = project.configurations.resolvable("njaClientSources") {
@@ -73,12 +105,12 @@ class NjaPlugin : Plugin<Project> {
             kotlin.sourceSets.getByName("commonMain").kotlin.srcDir(clientSources.map { it.incoming.files })
             project.dependencies.add("commonMainApi", "dev.nucleusframework.nja:nja-client:$NJA_VERSION")
             kotlin.targets.withType(KotlinNativeTarget::class.java).configureEach {
-                if (konanTarget.family == Family.IOS) configureIos(project, extension, classPath.get(), this)
+                if (konanTarget.family == Family.IOS) configureIos(project, extension, classPath.get(), this, jdkMobileTasks)
             }
             kotlin.targets.withType(KotlinJvmTarget::class.java).configureEach { configureJvm(project, this, facades, clientSources.get()) }
         }
         listOf("com.android.kotlin.multiplatform.library", "com.android.application", "com.android.library").forEach { id ->
-            project.pluginManager.withPlugin(id) { configureAndroid(project, extension, classPath.get()) }
+            project.pluginManager.withPlugin(id) { configureAndroid(project, extension, classPath.get(), jdkMobileTasks) }
         }
     }
 
@@ -92,12 +124,20 @@ class NjaPlugin : Plugin<Project> {
         }
     }
 
-    private fun configureAndroid(project: Project, extension: NjaExtension, classPath: Configuration) {
+    private fun configureAndroid(
+        project: Project,
+        extension: NjaExtension,
+        classPath: Configuration,
+        jdkMobileTasks: Map<String, TaskProvider<NjaJdkMobileTask>>,
+    ) {
         val abiDirs = mapOf("arm64-v8a" to "android-aarch64", "x86_64" to "android-x64")
+        // The runtimes of the ABIs shipped
+        val staging = extension.androidAbis.map { abis -> abis.map { jdkMobileTasks.getValue(abiDirs[it] ?: error("NJA: unsupported ABI $it")) } }
         val runtimes = extension.androidAbis.zip(extension.jdkMobile) { abis, root ->
             abis.associateWith { abi -> root.asFile.resolve(abiDirs[abi] ?: error("NJA: unsupported ABI $abi")).path }
         }
         val runtime = project.tasks.register("njaAndroidRuntime", NjaAndroidRuntimeTask::class.java) {
+            dependsOn(staging)
             javaHomes.set(runtimes.map { m -> m.mapValues { File(it.value, "lib").path } })
             javaHomeFiles.from(runtimes.map { m -> m.values.map { File(it, "lib") } })
             this.classPath.from(classPath)
@@ -114,6 +154,7 @@ class NjaPlugin : Plugin<Project> {
             }
         }
         val link = project.tasks.register("njaAndroidLink", NjaAndroidLinkTask::class.java) {
+            dependsOn(staging)
             this.runtimes.set(runtimes)
             runtimeFiles.from(runtimes.map { m -> m.values.flatMap { listOf(File(it, "static"), File(it, "include")) } })
             bridgeSource.fileProvider(bridge.map { it.outputs.files.singleFile })
@@ -170,7 +211,13 @@ class NjaPlugin : Plugin<Project> {
         project.tasks.named(main.compileKotlinTaskName) { dependsOn(check) }
     }
 
-    private fun configureIos(project: Project, extension: NjaExtension, classPath: Configuration, target: KotlinNativeTarget) {
+    private fun configureIos(
+        project: Project,
+        extension: NjaExtension,
+        classPath: Configuration,
+        target: KotlinNativeTarget,
+        jdkMobileTasks: Map<String, TaskProvider<NjaJdkMobileTask>>,
+    ) {
         val dirName = when (target.konanTarget) {
             KonanTarget.IOS_SIMULATOR_ARM64 -> "ios-simulator-aarch64"
             KonanTarget.IOS_ARM64 -> "ios-device-aarch64"
@@ -179,7 +226,9 @@ class NjaPlugin : Plugin<Project> {
         val runtime = extension.jdkMobile.dir(dirName)
         val name = target.name.replaceFirstChar { it.uppercaseChar() }
         // What the app's bundle carries: java.home (the VM sets it to <executable dir>/lib), the class path and options
+        val staging = jdkMobileTasks.getValue(dirName)
         val bundle = project.tasks.register("njaIosBundle$name", Copy::class.java) {
+            dependsOn(staging)
             into(project.layout.buildDirectory.dir("nja/ios/${target.name}"))
             // jdk-mobile's files are read-only: copies must stay writable to be refreshed
             filePermissions { user { read = true; write = true } }
@@ -195,6 +244,7 @@ class NjaPlugin : Plugin<Project> {
             val binary = this
             // Read when the link task is configured: the jdk-mobile directory is set by the module's build script by then
             binary.linkTaskProvider.configure {
+                dependsOn(staging)
                 val static = runtime.get().asFile.resolve("static")
                 binary.linkerOpts += listOf("jvm", "java", "nio", "net", "zip", "jimage", "verify", "extnet", "fallbackLinker", "syslookup")
                     .flatMap { listOf("-force_load", static.resolve("lib$it.a").path) } +
@@ -217,5 +267,8 @@ class NjaPlugin : Plugin<Project> {
 
     companion object {
         const val FACADES = "njaFacades"
+
+        /** jdk-mobile's targets, as its releases name their runtimes. */
+        val JDK_MOBILE_TARGETS = listOf("android-aarch64", "android-x64", "ios-simulator-aarch64", "ios-device-aarch64")
     }
 }

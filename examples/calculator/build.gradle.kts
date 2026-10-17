@@ -42,6 +42,5 @@ nucleusJvm {
     facade(project(":examples:calculator-facade"))
     // A second façade in the same JVM: NJA's own stress tests
     facade(project(":examples:torture-facade"))
-    jdkMobile = rootProject.layout.projectDirectory.dir(".jdk-mobile/stage")
     jvmOptions.addAll("-Xss2m", "-Xmx512m")
 }

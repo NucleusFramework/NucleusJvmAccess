@@ -84,8 +84,8 @@ kotlin {
 }
 nucleusJvm {
     facade(project(":search-facade"))
-    jdkMobile = layout.projectDirectory.dir("jdk-mobile")   // see "jdk-mobile" below
     jvmOptions.addAll("-Xmx512m")
+    // The JVM's runtimes: jdk-mobile's latest release, downloaded (see "jdk-mobile" below)
 }
 ```
 
@@ -151,16 +151,24 @@ interpreter) suits occasional calls, not CPU-bound work; an empty call costs 2.4
 
 ## jdk-mobile
 
-The plugin reads jdk-mobile's runtimes from `nucleusJvm.jdkMobile`, one directory per target (`android-aarch64`,
-`android-x64`, `ios-simulator-aarch64`, `ios-device-aarch64`), each with `static/`, `include/` and `lib/` (java.home).
-[jdk-mobile](https://github.com/NucleusFramework/openjdk-mobile)'s releases carry all of them (from `jdk-mobile-27b35.3`,
-whose Android runtimes include the static libraries built with `inprocess.patch`):
+The JVM's runtimes are [jdk-mobile](https://github.com/NucleusFramework/openjdk-mobile)'s releases (from
+`jdk-mobile-27b35.3`, whose Android runtimes include the static libraries built with `inprocess.patch`). The plugin
+downloads those the module needs (the Android ABIs it ships, its iOS targets), checks them against the `.sha256`
+published with them, keeps them in Gradle's cache (`~/.gradle/caches/nja/jdk-mobile`: a `clean` downloads nothing) and
+extracts them into `build/nja/jdkMobile`; the tasks reading them depend on it (`njaJdkMobile<Target>`).
 
-```bash
-./scripts/stage-jdk-mobile.sh .jdk-mobile/stage --release jdk-mobile-27b35.3
+```kotlin
+nucleusJvm {
+    jdkMobileRelease = "jdk-mobile-27b35.3"          // default: latest (resolved once a day; offline, the last one)
+    jdkMobileRepository = "NucleusFramework/openjdk-mobile"  // the default
+    jdkMobile = layout.projectDirectory.dir("my-jdk") // instead: runtimes of one's own, used as they are
+}
 ```
 
-It downloads the four runtimes, checks their SHA-256 and lays them out.
+With `latest`, a new jdk-mobile release reaches the next build: pin `jdkMobileRelease` for builds that must not move.
+Runtimes of one's own are one directory per target (`android-aarch64`, `android-x64`, `ios-simulator-aarch64`,
+`ios-device-aarch64`), each with `static/`, `include/` and `lib/` (java.home); `scripts/stage-jdk-mobile.sh` lays out
+a local OpenJDK build that way.
 
 ### How jdk-mobile is built
 
