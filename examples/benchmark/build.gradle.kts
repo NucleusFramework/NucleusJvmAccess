@@ -36,6 +36,5 @@ kotlin {
 
 nucleusJvm {
     facade(project(":examples:benchmark-facade"))
-    jdkMobile = rootProject.layout.projectDirectory.dir(".jdk-mobile/stage")
     jvmOptions.addAll("-Xmx512m", "-Xss2m")
 }

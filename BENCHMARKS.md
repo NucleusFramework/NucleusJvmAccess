@@ -58,9 +58,7 @@ Each call is measured from the app, round trip included.
 
 ## Reproduce
 
-```bash
-./scripts/stage-jdk-mobile.sh .jdk-mobile/stage --release jdk-mobile-27b35.3
-```
+The runtimes are jdk-mobile's latest release, which the plugin downloads.
 
 ```bash
 ./gradlew :examples:benchmark-facade:runHostBenchmark
