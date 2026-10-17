@@ -249,7 +249,9 @@ Android's `libnja.so` link. The app's code doesn't change: the client finds the 
 - **Options**: `jvmOptions`' `-Xmx` becomes the image's maximum heap (`-R:MaxHeapSize`), its `-D` system properties
   are kept; `nativeImageOptions` go to native-image as they are.
 - **Android**: arm64 and x86_64 (the emulators). native-image compiles its host's Java classes, so an Android image
-  builds on Linux only (a CI); on macOS, keep `androidRuntime = NjaRuntimeType.JVM` for local builds. GraalVM has no FFM
+  builds on Linux only (a CI); on macOS, keep `androidRuntime = NjaRuntimeType.JVM` for local builds. native-image runs
+  small C programs for the target: on a Linux host of another architecture (arm64 images on x64), through qemu-user
+  (`qemu-user-static` with binfmt). GraalVM has no FFM
   API (`java.lang.foreign`) for Android: the libraries must do without it.
 
 ## Layout
