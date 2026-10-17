@@ -10,6 +10,7 @@ import dev.nucleusframework.nja.plugin.ir.ApiInterface
 import dev.nucleusframework.nja.plugin.ir.ApiModule
 import dev.nucleusframework.nja.plugin.ir.ApiParam
 import dev.nucleusframework.nja.plugin.ir.ApiProperty
+import dev.nucleusframework.nja.plugin.ir.ApiSealedValue
 import dev.nucleusframework.nja.plugin.ir.ApiSourceDecl
 import dev.nucleusframework.nja.plugin.ir.ApiType
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreApplicationEnvironment
@@ -131,11 +132,13 @@ class PsiSourceParser {
 
         fun visit(declarations: List<KtDeclaration>, parentFq: String?) {
             for (decl in declarations) {
-                if (decl !is KtClass) continue
+                if (decl !is KtClass || decl.isPrivateOrInternal()) continue
                 val name = decl.name ?: continue
                 val fq = if (parentFq != null) "$parentFq.$name"
                     else if (pkg.isNotEmpty()) "$pkg.$name" else name
+                val cases = sealedValueCases(decl)
                 when {
+                    cases != null -> decls += PrescanDecl(name, fq, DeclKind.SEALED_VALUE, cases = cases)
                     decl.isEnum() -> decls += PrescanDecl(name, fq, DeclKind.ENUM)
                     decl.isData() -> decls += PrescanDecl(name, fq, DeclKind.DATA_CLASS, dataParams(decl))
                     decl.isInterface() -> decls += PrescanDecl(name, fq, DeclKind.INTERFACE)
@@ -148,6 +151,24 @@ class PsiSourceParser {
         }
         visit(ktFile.declarations.toList(), null)
         return decls
+    }
+
+    /**
+     * The cases of a sealed value hierarchy: a sealed interface or class whose nested declarations are all data
+     * classes or objects (a companion aside), at least one; null for any other declaration.
+     */
+    private fun sealedValueCases(decl: KtClass): List<SealedCaseSyntax>? {
+        if (!decl.hasModifier(KtTokens.SEALED_KEYWORD)) return null
+        val cases = mutableListOf<SealedCaseSyntax>()
+        for (nested in decl.declarations) {
+            when {
+                nested is KtObjectDeclaration && nested.isCompanion() -> continue
+                nested is KtObjectDeclaration -> cases += SealedCaseSyntax(nested.name ?: return null, isObject = true, params = null)
+                nested is KtClass && nested.isData() -> cases += SealedCaseSyntax(nested.name ?: return null, isObject = false, params = dataParams(nested))
+                nested is KtClass -> return null
+            }
+        }
+        return cases.ifEmpty { null }
     }
 
     private fun dataParams(ktClass: KtClass): List<DataParamSyntax>? =
@@ -163,11 +184,16 @@ class PsiSourceParser {
         val enums = mutableListOf<ApiEnum>()
         val functions = mutableListOf<Pair<String, ApiFunction>>()
         val interfaces = mutableListOf<ApiInterface>()
+        val sealedValues = mutableListOf<ApiSealedValue>()
 
         fun processDeclarations(declarations: List<KtDeclaration>, parentSimpleName: String?, isTopLevel: Boolean) {
             for (decl in declarations) {
                 if (decl.isPrivateOrInternal()) continue
+                val sealed = (decl as? KtClass)?.name?.let { scope.sealedValue(it) }
                 when {
+                    decl is KtClass && sealed != null -> sealedValues += ApiSealedValue(
+                        decl.name!!, sealed.first, sealed.second, source = sourceDecl(decl, imports),
+                    )
                     decl is KtClass && decl.isEnum() -> parseEnum(decl, pkg, scope)
                         ?.copy(source = sourceDecl(decl, imports))
                         ?.let { enums += it }
@@ -211,7 +237,7 @@ class PsiSourceParser {
             }
         }
         processDeclarations(ktFile.declarations.toList(), null, true)
-        return FileFragment(pkg, classes, dataClasses, enums, functions, interfaces)
+        return FileFragment(pkg, classes, dataClasses, enums, functions, interfaces, sealedValues)
     }
 
     /** Merges per-file fragments in source order; the first declaration of a given FQ name wins. */
@@ -221,6 +247,7 @@ class PsiSourceParser {
         val enumMap = LinkedHashMap<String, ApiEnum>()
         val functionMap = LinkedHashMap<String, ApiFunction>()
         val interfaceMap = LinkedHashMap<String, ApiInterface>()
+        val sealedMap = LinkedHashMap<String, ApiSealedValue>()
         val packages = LinkedHashSet<String>()
 
         for (fragment in fragments) {
@@ -230,6 +257,7 @@ class PsiSourceParser {
             fragment.enums.forEach { enumMap.putIfAbsent(it.fqName, it) }
             fragment.functions.forEach { (key, fn) -> functionMap.putIfAbsent(key, fn) }
             fragment.interfaces.forEach { interfaceMap.putIfAbsent(it.fqName, it) }
+            fragment.sealedValues.forEach { sealedMap.putIfAbsent(it.fqName, it) }
         }
 
         // Ensure common data classes are present even if only defined in commonMain
@@ -240,7 +268,7 @@ class PsiSourceParser {
 
         return ApiModule(
             libName, packages, classMap.values.toList(), dataClassMap.values.toList(),
-            enumMap.values.toList(), functionMap.values.toList(), interfaceMap.values.toList(),
+            enumMap.values.toList(), functionMap.values.toList(), interfaceMap.values.toList(), sealedMap.values.toList(),
         )
     }
 
@@ -260,8 +288,8 @@ class PsiSourceParser {
             val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
             ApiParam(pName, type, hasDefault = param.hasDefaultValue())
         }
-        // Constructor val/var params are properties — collect them for getter/setter generation
-        val ctorProperties = rawCtorParams.filter { it.hasValOrVar() }.mapNotNull { param ->
+        // Constructor val/var params are properties — collect them for getter/setter generation (the public ones)
+        val ctorProperties = rawCtorParams.filter { it.hasValOrVar() && !it.isPrivateOrInternal() }.mapNotNull { param ->
             val pName = param.name ?: return@mapNotNull null
             val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
             ApiProperty(pName, type, param.isMutable)
@@ -319,7 +347,7 @@ class PsiSourceParser {
             when (decl) {
                 is KtNamedFunction -> {
                     if (decl.name?.startsWith("_") == true) continue
-                    parseFunction(decl, scope)?.let { methods.add(it) }
+                    parseFunction(decl, scope)?.let { methods.addAll(it.withDefaultOverloads()) }
                 }
                 is KtProperty -> {
                     val propName = decl.name ?: continue
@@ -330,7 +358,7 @@ class PsiSourceParser {
                     for (cd in decl.declarations) {
                         if (cd.isPrivateOrInternal()) continue
                         when (cd) {
-                            is KtNamedFunction -> parseFunction(cd, scope)?.let { companionMethods.add(it) }
+                            is KtNamedFunction -> parseFunction(cd, scope)?.let { companionMethods.addAll(it.withDefaultOverloads()) }
                             is KtProperty -> parseProperty(cd, scope)?.let { companionProperties.add(it) }
                         }
                     }
@@ -342,6 +370,7 @@ class PsiSourceParser {
             isOpen = isOpen, isAbstract = isAbstract, isSealed = isSealed,
             superClass = superClass, interfaces = implementedInterfaces, sealedSubclasses = sealedSubclasses,
             isCommon = isCommon,
+            isConstructible = ktClass.primaryConstructor?.isPrivateOrInternal() != true && ctorParams.size == rawCtorParams.size,
         )
     }
 
@@ -406,17 +435,27 @@ class PsiSourceParser {
             ApiEnumEntry(entryName, args)
         }
 
+    /**
+     * The function and, as for constructors, one overload per trailing parameter with a default value: the app calls
+     * the one it needs, and the JVM applies the façade's defaults.
+     */
+    private fun ApiFunction.withDefaultOverloads(): List<ApiFunction> {
+        val trailingDefaults = params.reversed().takeWhile { it.hasDefault }.size
+        return (0..trailingDefaults).map { drop -> if (drop == 0) this else copy(params = params.dropLast(drop)) }
+    }
+
     private fun parseFunction(fn: KtNamedFunction, scope: RecordingScope): ApiFunction? {
         val name = fn.name ?: return null
         if (name == "init") return null
         val isSuspend = fn.hasModifier(KtTokens.SUSPEND_KEYWORD)
         val isOverride = fn.hasModifier(KtTokens.OVERRIDE_KEYWORD)
-        val params = fn.valueParameters.mapNotNull { param ->
-            val pName = param.name ?: return@mapNotNull null
-            val type = resolveType(param.typeReference, scope) ?: return@mapNotNull null
-            ApiParam(pName, type)
+        // Left out when a parameter or the result can't cross the bridge
+        val params = fn.valueParameters.map { param ->
+            val pName = param.name ?: return null
+            val type = resolveType(param.typeReference, scope) ?: return null
+            ApiParam(pName, type, hasDefault = param.hasDefaultValue())
         }
-        val returnType = fn.typeReference?.let { resolveType(it, scope) } ?: ApiType.UNIT
+        val returnType = fn.typeReference?.let { resolveType(it, scope) ?: return null } ?: ApiType.UNIT
 
         // Extension function detection
         val receiverTypeRef = fn.receiverTypeReference

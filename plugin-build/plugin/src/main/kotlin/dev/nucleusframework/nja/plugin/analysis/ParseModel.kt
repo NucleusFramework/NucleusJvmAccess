@@ -5,6 +5,7 @@ import dev.nucleusframework.nja.plugin.ir.ApiDataClass
 import dev.nucleusframework.nja.plugin.ir.ApiEnum
 import dev.nucleusframework.nja.plugin.ir.ApiFunction
 import dev.nucleusframework.nja.plugin.ir.ApiInterface
+import dev.nucleusframework.nja.plugin.ir.ApiSealedValue
 import java.io.Serializable
 import java.security.MessageDigest
 
@@ -17,6 +18,7 @@ data class FileFragment(
     /** Keyed by function name, or `Receiver.name` for extension functions. */
     val functions: List<Pair<String, ApiFunction>>,
     val interfaces: List<ApiInterface>,
+    val sealedValues: List<ApiSealedValue> = emptyList(),
 ) : Serializable
 data class CachedSourceFile(
     val contentHash: String,

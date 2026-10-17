@@ -24,13 +24,18 @@ your iOS and Android code calls as if it were local.
 
 ## How it works
 
-| | iOS | Android |
-|---|---|---|
-| JVM | Zero (jdk-mobile's interpreter: iOS forbids JIT) | HotSpot server VM (C2 JIT) |
-| Where | Linked into the app (`libjvm.a`, static) | `libnja.so`: HotSpot + the JDK's natives + the bridge, loaded by ART |
-| Calls | JNI from the calling Kotlin/Native thread (attached on first use, detached when it ends) | Handed from the ART thread to a HotSpot thread paired with it (futex channel, spin-then-sleep) |
-| Callbacks (JVM → app) | JNI upcall on the same thread | The answer of the channel, served on the ART thread; nested calls recurse on the same pair |
-| Fallback process | none | none |
+| | iOS | Android | JVM (desktop) |
+|---|---|---|---|
+| JVM | Zero (jdk-mobile's interpreter: iOS forbids JIT) | HotSpot server VM (C2 JIT) | The app's own |
+| Where | Linked into the app (`libjvm.a`, static) | `libnja.so`: HotSpot + the JDK's natives + the bridge, loaded by ART | The façades on the app's class path |
+| Calls | JNI from the calling Kotlin/Native thread (attached on first use, detached when it ends) | Handed from the ART thread to a HotSpot thread paired with it (futex channel, spin-then-sleep) | A plain call into the dispatcher, on the calling thread |
+| Callbacks (JVM → app) | JNI upcall on the same thread | The answer of the channel, served on the ART thread; nested calls recurse on the same pair | A plain call back, on the same thread |
+| Fallback process | none | none | none |
+
+**A JVM target** (`jvm()`, a desktop app) sees the same proxies as the mobile ones, with the façades in its own JVM:
+the plugin puts them on the target's runtime class path, and the messages are still encoded (the app's code is the
+same everywhere). Both the façades and their proxies being on that class path, the proxies need a package of their own:
+set `njaFacade { clientPackage = "…" }` (the plugin checks it before the JVM target compiles).
 
 **One process on Android.** ART and HotSpot can't share a *thread* (both keep their state in TLS and guard zones on the
 stack), but they can share a *process*:
@@ -100,12 +105,17 @@ Kotlin binaries (`-force_load` of jdk-mobile's static libraries, `-export_dynami
 
 The façade's public API, parsed from its sources with Kotlin PSI: `Int`,
 `Long`, `Double`, `Float`, `Boolean`, `Byte`, `Short`, `String` (length-prefixed UTF-8: NUL included), `ByteArray`,
-enums (verbatim, bodies included), data classes (verbatim), classes (proxies, `AutoCloseable`, released on `close()` or
-when collected), open/abstract/sealed classes and interfaces (hierarchy mirrored, objects wrapped in their most specific
+`IntArray`, `LongArray`, `FloatArray`, `DoubleArray`, enums (verbatim, bodies included), data classes (verbatim), sealed
+value hierarchies (a sealed interface or class whose nested cases are all data classes or objects: verbatim, by value,
+recursive ones included), classes (proxies, released on `close()` or when collected; an `AutoCloseable`'s `close()`
+closes the JVM object, then releases it), default arguments (overloads: the JVM applies the defaults), open/abstract/sealed classes and interfaces (hierarchy mirrored, objects wrapped in their most specific
 exported type), nested classes (`Outer_Inner`), companion objects, extension and top-level functions, nullable types,
 `List`/`Set`/`Map` (nested), lambdas as parameters (callbacks, valid during the call, exceptions rethrown as themselves)
 and as return values (JVM lambdas the app calls), `suspend` functions (cancellable both ways) and `Flow` (credit-based
 backpressure).
+
+Private and internal declarations stay the JVM's, as does a constructor that is private, internal, or takes what can't
+cross; a function whose parameters or result can't cross is left out.
 
 JVM exceptions arrive as `JvmException` (with the JVM class name, message and stack); exceptions an app callback throws
 come back out of the call as themselves. A closed proxy fails with `IllegalStateException`; `close()` releases the JVM
@@ -113,8 +123,9 @@ object once the calls using it are done (receiver *and* arguments are leased).
 
 ## Tests
 
-`examples/calculator` runs a suite of 1,977 tests (types, callbacks, suspend, flows, inheritance, load, concurrency,
-monkey and torture tests) against a calculator façade, on iOS and on Android, from `commonTest`, plus NJA's own
+`examples/calculator` runs a suite of 2,008 tests (types, arrays, sealed values, callbacks, suspend, flows, inheritance,
+load, concurrency, monkey and torture tests) against a calculator façade, on iOS, on Android and on the JVM, from
+`commonTest`, plus NJA's own
 torture suite (`NjaTortureTest`): JVM null checks and stack overflows on 16 threads while the app faults and
 collects, JIT deoptimization storms, 300-level JVM ↔ app nesting, callbacks invoked from the wrong JVM thread, thread
 churn (1,000 threads, no JVM thread leak), 24–48 MB payloads, 100k handles released by close and by collection,
@@ -126,6 +137,10 @@ cancellation storms, 200k-element flows, a 20 s chaos soak on 24 threads.
 
 ```bash
 ./gradlew :examples:calculator:connectedAndroidDeviceTest
+```
+
+```bash
+./gradlew :examples:calculator:jvmTest
 ```
 
 ## Performance

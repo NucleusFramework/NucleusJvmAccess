@@ -11,6 +11,7 @@ kotlin {
 
 njaFacade {
     libName = "torture"
+    clientPackage = "com.example.torture.client"
 }
 
 dependencies {

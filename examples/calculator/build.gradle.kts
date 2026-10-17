@@ -16,6 +16,8 @@ kotlin {
     }
     iosSimulatorArm64()
     iosArm64()
+    // The desktop: the façades in this JVM, the same suites
+    jvm()
 
     compilerOptions {
         optIn.add("kotlin.concurrent.atomics.ExperimentalAtomicApi")

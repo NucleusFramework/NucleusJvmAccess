@@ -10,6 +10,26 @@ data class ApiModule(
     val enums: List<ApiEnum>,
     val functions: List<ApiFunction>,
     val interfaces: List<ApiInterface> = emptyList(),
+    val sealedValues: List<ApiSealedValue> = emptyList(),
+) : Serializable
+
+/**
+ * A sealed value hierarchy: a sealed interface or class whose cases, nested in it, are all data classes or objects.
+ * It travels by value (its case, then the case's fields), copied verbatim to the app like a data class.
+ */
+data class ApiSealedValue(
+    val simpleName: String,
+    val fqName: String,
+    val cases: List<ApiSealedCase>,
+    val source: ApiSourceDecl? = null,
+) : Serializable
+
+/** A case of an [ApiSealedValue]: [name] nested in it, an object or a data class with [fields]. */
+data class ApiSealedCase(
+    val name: String,
+    val fqName: String,
+    val isObject: Boolean,
+    val fields: List<ApiParam>,
 ) : Serializable
 
 data class ApiDataClass(
@@ -53,6 +73,8 @@ data class ApiClass(
     val interfaces: List<String> = emptyList(),
     val sealedSubclasses: List<String> = emptyList(),
     val isCommon: Boolean = false,
+    /** Whether the app may construct it: a public constructor whose parameters all cross the bridge. */
+    val isConstructible: Boolean = true,
 ) : Serializable
 
 data class ApiEnumEntry(
@@ -111,11 +133,21 @@ sealed class ApiType : Serializable {
     data class NULLABLE(val inner: ApiType) : ApiType()
     data class FUNCTION(val paramTypes: List<ApiType>, val returnType: ApiType) : ApiType()
     data class DATA_CLASS(val fqName: String, val simpleName: String, val fields: List<ApiParam>) : ApiType()
+    data class SEALED_VALUE(val fqName: String, val simpleName: String) : ApiType()
     data object BYTE_ARRAY : ApiType()
+    data object INT_ARRAY : ApiType()
+    data object LONG_ARRAY : ApiType()
+    data object FLOAT_ARRAY : ApiType()
+    data object DOUBLE_ARRAY : ApiType()
     data class LIST(val elementType: ApiType) : ApiType()
     data class SET(val elementType: ApiType) : ApiType()
     data class MAP(val keyType: ApiType, val valueType: ApiType) : ApiType()
     data class FLOW(val elementType: ApiType) : ApiType()
+
+    companion object {
+        /** The arrays, encoded as a count and their elements: nullable like strings, with no wrapper. */
+        val ARRAYS: Set<ApiType> get() = setOf(BYTE_ARRAY, INT_ARRAY, LONG_ARRAY, FLOAT_ARRAY, DOUBLE_ARRAY)
+    }
 
     /** Preserves singleton identity when deserialized from the incremental cache. */
     protected fun readResolve(): Any = when (this) {
@@ -129,6 +161,10 @@ sealed class ApiType : Serializable {
         STRING -> STRING
         UNIT -> UNIT
         BYTE_ARRAY -> BYTE_ARRAY
+        INT_ARRAY -> INT_ARRAY
+        LONG_ARRAY -> LONG_ARRAY
+        FLOAT_ARRAY -> FLOAT_ARRAY
+        DOUBLE_ARRAY -> DOUBLE_ARRAY
         else -> this
     }
 
@@ -150,7 +186,12 @@ sealed class ApiType : Serializable {
             is NULLABLE -> if (inner is FUNCTION) "(${inner.clientName})?" else "${inner.clientName}?"
             is FUNCTION -> "(${paramTypes.joinToString(", ") { it.clientName }}) -> ${returnType.clientName}"
             is DATA_CLASS -> simpleName
+            is SEALED_VALUE -> simpleName
             BYTE_ARRAY -> "ByteArray"
+            INT_ARRAY -> "IntArray"
+            LONG_ARRAY -> "LongArray"
+            FLOAT_ARRAY -> "FloatArray"
+            DOUBLE_ARRAY -> "DoubleArray"
             is LIST -> "List<${elementType.clientName}>"
             is SET -> "Set<${elementType.clientName}>"
             is MAP -> "Map<${keyType.clientName}, ${valueType.clientName}>"
@@ -164,6 +205,7 @@ sealed class ApiType : Serializable {
             is INTERFACE -> fqName
             is ENUM -> fqName
             is DATA_CLASS -> fqName
+            is SEALED_VALUE -> fqName
             is NULLABLE -> if (inner is FUNCTION) "(${inner.serverName})?" else "${inner.serverName}?"
             is FUNCTION -> "(${paramTypes.joinToString(", ") { it.serverName }}) -> ${returnType.serverName}"
             is LIST -> "List<${elementType.serverName}>"

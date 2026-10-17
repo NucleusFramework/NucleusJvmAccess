@@ -94,6 +94,35 @@ class WireWriter(capacity: Int = 256) {
         size += value.size
     }
 
+    /** Primitive arrays: their count (-1 for null), then their elements as [writeInt]... writes them. */
+    fun writeInts(value: IntArray?) {
+        if (value == null) return writeInt(-1)
+        writeInt(value.size)
+        ensure(4 * value.size)
+        for (v in value) writeInt(v)
+    }
+
+    fun writeLongs(value: LongArray?) {
+        if (value == null) return writeInt(-1)
+        writeInt(value.size)
+        ensure(8 * value.size)
+        for (v in value) writeLong(v)
+    }
+
+    fun writeFloats(value: FloatArray?) {
+        if (value == null) return writeInt(-1)
+        writeInt(value.size)
+        ensure(4 * value.size)
+        for (v in value) writeFloat(v)
+    }
+
+    fun writeDoubles(value: DoubleArray?) {
+        if (value == null) return writeInt(-1)
+        writeInt(value.size)
+        ensure(8 * value.size)
+        for (v in value) writeDouble(v)
+    }
+
     fun writeRaw(value: ByteArray, offset: Int = 0, length: Int = value.size - offset) {
         ensure(length)
         value.copyInto(buffer, size, offset, offset + length)
@@ -159,6 +188,34 @@ class WireReader(private val buffer: ByteArray, private var position: Int = 0, p
         val value = buffer.copyOfRange(position, position + length)
         position += length
         return value
+    }
+
+    fun readInts(): IntArray? {
+        val length = readInt()
+        if (length < 0) return null
+        check(4 * length)
+        return IntArray(length) { readInt() }
+    }
+
+    fun readLongs(): LongArray? {
+        val length = readInt()
+        if (length < 0) return null
+        check(8 * length)
+        return LongArray(length) { readLong() }
+    }
+
+    fun readFloats(): FloatArray? {
+        val length = readInt()
+        if (length < 0) return null
+        check(4 * length)
+        return FloatArray(length) { readFloat() }
+    }
+
+    fun readDoubles(): DoubleArray? {
+        val length = readInt()
+        if (length < 0) return null
+        check(8 * length)
+        return DoubleArray(length) { readDouble() }
     }
 
     private fun check(count: Int) {
