@@ -147,7 +147,9 @@ cancellation storms, 200k-element flows, a 20 s chaos soak on 24 threads.
 
 See [BENCHMARKS.md](BENCHMARKS.md). In short, on Android NJA's HotSpot runs Jackson and Commons Math 1.8–7.8× faster
 than ART, and Lucene 10 (Java 21, out of ART's reach) at desktop speed; an empty call costs 0.33 µs. On iOS, Zero (an
-interpreter) suits occasional calls, not CPU-bound work; an empty call costs 2.4 µs.
+interpreter) suits occasional calls, not CPU-bound work; an empty call costs 2.4 µs. A GraalVM native image (`GRAALVM`) runs at HotSpot's
+speed on both: on a real app's Lucene search, 8× faster than Zero on iOS, and on par with Lucene patched for ART on
+Android, at about its memory.
 
 ## jdk-mobile
 
