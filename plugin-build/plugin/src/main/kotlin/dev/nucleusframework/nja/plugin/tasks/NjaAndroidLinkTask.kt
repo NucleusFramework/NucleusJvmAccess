@@ -123,7 +123,7 @@ abstract class NjaAndroidLinkTask : DefaultTask() {
 
     /**
      * The symbols the kit's link wraps (`-Wl,--wrap=<name>`, from its `link.flags`): glibc's calls its glibc_compat
-     * translates for bionic (the resolver's struct addrinfo). Kits without them (up to b1.2) wrap nothing.
+     * translates for bionic (the resolver's struct addrinfo). Kits without them (before graalvm-mobile-25.5.5.0.3b1.2) wrap nothing.
      */
     private fun kitWraps(kit: File): List<String> {
         val file = kit.resolve(NjaGraalvmTask.KIT_PROPERTIES)
