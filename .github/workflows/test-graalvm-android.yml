@@ -22,7 +22,9 @@ jobs:
           (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" > /dev/null || true
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
           # native-image's C queries for arm64 run on this x64 runner through qemu-user
-          sudo apt-get update -q && sudo apt-get install -yq qemu-user-static binfmt-support
+          # (qemu-user-static until Ubuntu 25.10; qemu-user-binfmt from 26.04, whose qemu-user is static)
+          sudo apt-get update -q
+          sudo apt-get install -yq qemu-user-static binfmt-support || sudo apt-get install -yq qemu-user-binfmt
       - name: Test APKs
         env:
           GITHUB_TOKEN: ${{ github.token }}
