@@ -46,3 +46,5 @@ internal actual fun appFaultStorm(count: Int): Int {
     }
     return caught + (if (missing == null) 0 else 0)
 }
+
+internal actual val isDesktopNative: Boolean = false

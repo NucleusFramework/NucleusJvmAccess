@@ -15,15 +15,28 @@ import dev.nucleusframework.nja.jni.jmethodID
 import dev.nucleusframework.nja.jni.jvalue
 import dev.nucleusframework.nja.jni.nja_attach_current_thread
 import dev.nucleusframework.nja.jni.nja_create_java_vm
+import dev.nucleusframework.nja.jni.nja_executable_path
+import dev.nucleusframework.nja.jni.nja_file_kind
+import dev.nucleusframework.nja.jni.nja_getenv
 import dev.nucleusframework.nja.jni.nja_graal_available
 import dev.nucleusframework.nja.jni.nja_graal_call
+import dev.nucleusframework.nja.jni.nja_graal_free_reply
 import dev.nucleusframework.nja.jni.nja_graal_start
+import dev.nucleusframework.nja.jni.nja_list_directory
+import dev.nucleusframework.nja.jni.nja_load_runtime
+import dev.nucleusframework.nja.jni.nja_lock_free
+import dev.nucleusframework.nja.jni.nja_lock_lock
+import dev.nucleusframework.nja.jni.nja_lock_new
+import dev.nucleusframework.nja.jni.nja_lock_unlock
+import dev.nucleusframework.nja.jni.nja_read_file
+import dev.nucleusframework.nja.jni.nja_symbol
+import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.COpaquePointerVar
 import kotlinx.cinterop.CPointer
-import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
-import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
@@ -33,16 +46,12 @@ import kotlinx.cinterop.invoke
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.staticCFunction
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
-import platform.Foundation.NSBundle
-import platform.Foundation.NSFileManager
-import platform.Foundation.NSRecursiveLock
-import platform.Foundation.NSString
-import platform.Foundation.NSUTF8StringEncoding
-import platform.Foundation.stringWithContentsOfFile
 import platform.posix.free
 import platform.posix.malloc
 import platform.posix.memcpy
@@ -51,12 +60,17 @@ import kotlin.native.concurrent.ObsoleteWorkersApi
 import kotlin.native.concurrent.ThreadLocal
 import kotlin.native.concurrent.TransferMode
 import kotlin.native.concurrent.Worker
+import kotlin.native.ref.Cleaner
 import kotlin.native.ref.createCleaner
 
 internal actual class NjaLock actual constructor() {
-    private val lock = NSRecursiveLock()
-    actual fun lock() = lock.lock()
-    actual fun unlock() = lock.unlock()
+    private val lock: COpaquePointer = nja_lock_new() ?: throw OutOfMemoryError()
+
+    @Suppress("unused")
+    private val cleaner: Cleaner = createCleaner(lock) { nja_lock_free(it) }
+
+    actual fun lock() = nja_lock_lock(lock)
+    actual fun unlock() = nja_lock_unlock(lock)
 }
 
 @ThreadLocal
@@ -75,13 +89,102 @@ internal actual fun startDaemon(name: String, body: () -> Unit) {
 
 internal actual fun createCleaner(ref: JvmRef): Any = createCleaner(ref) { it.close() }
 
-internal actual fun startTransport(): Transport = if (nja_graal_available() != 0) IosGraal.apply { start() } else IosJvm.apply { start() }
+/**
+ * The runtime: linked into the binary (iOS), or a shared library loaded from the runtime's directory (macOS, Linux,
+ * Windows): the façades' native image if it is there, else a JDK's JVM.
+ */
+internal actual fun startTransport(): Transport {
+    if (nja_graal_available() != 0) return NativeGraal.apply { start() }
+    if (nja_symbol("JNI_CreateJavaVM") == null) {
+        val image = "${RuntimeFiles.directory}/${RuntimeFiles.imageLibrary}"
+        if (RuntimeFiles.isFile(image)) {
+            RuntimeFiles.load(image, null)
+            return NativeGraal.apply { start() }
+        }
+        val javaHome = RuntimeFiles.javaHome()
+        RuntimeFiles.load("$javaHome/${RuntimeFiles.jvmLibrary}", if (RuntimeFiles.isWindows) "$javaHome/bin" else null)
+    }
+    return NativeJvm.apply { start() }
+}
 
 /**
- * The façades compiled into a GraalVM native image, linked into the app: the app's threads call its entry points,
- * attached to its isolate on their first call, and it calls the app back on the same thread.
+ * Where the runtime is: `NJA_HOME`, or the `nja` directory next to the executable (an iOS app's bundle: the
+ * executable is at its root). There, the façades' native image (`libnja.dylib`, `libnja.so`, `nja.dll`), or the JVM's
+ * class path (`classpath/`), options (`jvm.options`) and, optionally, java.home (`runtime/`, else `JAVA_HOME`'s).
  */
-private object IosGraal : Transport {
+private object RuntimeFiles {
+    val isWindows = Platform.osFamily == OsFamily.WINDOWS
+
+    val directory: String by lazy {
+        getenv("NJA_HOME") ?: run {
+            val executable = nja_executable_path()?.let { path -> path.toKString().also { free(path) } }
+                ?: error("NJA: can't find the executable's path")
+            "${executable.substring(0, executable.lastIndexOfAny(charArrayOf('/', '\\')))}/nja"
+        }
+    }
+
+    val imageLibrary = when (Platform.osFamily) {
+        OsFamily.MACOSX -> "libnja.dylib"
+        OsFamily.WINDOWS -> "nja.dll"
+        else -> "libnja.so"
+    }
+
+    val jvmLibrary = when (Platform.osFamily) {
+        OsFamily.MACOSX -> "lib/server/libjvm.dylib"
+        OsFamily.WINDOWS -> "bin/server/jvm.dll"
+        else -> "lib/server/libjvm.so"
+    }
+
+    val classPathSeparator = if (isWindows) ";" else ":"
+
+    fun javaHome(): String {
+        val bundled = "$directory/runtime"
+        if (nja_file_kind(bundled) == 2) return bundled
+        return getenv("JAVA_HOME") ?: error(
+            "NJA: no runtime in $directory: neither the façades' native image ($imageLibrary) nor a JVM (runtime/, or JAVA_HOME)",
+        )
+    }
+
+    fun isFile(path: String) = nja_file_kind(path) == 1
+
+    fun load(path: String, dependencies: String?) {
+        val failure = nja_load_runtime(path, dependencies)
+        check(failure == null) { "NJA: can't load $path: ${failure?.toKString()}" }
+    }
+
+    fun list(path: String): List<String> {
+        val names = nja_list_directory(path) ?: return emptyList()
+        try {
+            return names.toKString().lines().filter { it.isNotEmpty() }
+        } finally {
+            free(names)
+        }
+    }
+
+    fun read(path: String): String? {
+        val content = nja_read_file(path) ?: return null
+        try {
+            return content.toKString()
+        } finally {
+            free(content)
+        }
+    }
+
+    private fun getenv(name: String): String? {
+        val value = nja_getenv(name) ?: return null
+        try {
+            return value.toKString().takeIf { it.isNotEmpty() }
+        } finally {
+            free(value)
+        }
+    }
+}
+
+/**
+ * The façades compiled into a GraalVM native image, linked into the app or loaded: the app's threads call its entry
+ * points, attached to its isolate on their first call, and it calls the app back on the same thread.
+ */
+private object NativeGraal : Transport {
     fun start() {
         val result = nja_graal_start(staticCFunction(::graalUpcall))
         check(result == 0) { "NJA: the native image's isolate failed to start: $result" }
@@ -94,7 +197,7 @@ private object IosGraal : Transport {
         try {
             reply.reinterpret<ByteVar>().readBytes(replyLength.value)
         } finally {
-            free(reply)
+            nja_graal_free_reply(reply)
         }
     }
 }
@@ -109,24 +212,22 @@ private fun graalUpcall(request: CPointer<ByteVar>?, length: Int, answerLength: 
 }
 
 /**
- * The JVM (jdk-mobile's Zero, linked into the app) in the app's process: the app's threads call it through JNI,
- * attached on their first call. Its java.home is `<app>/lib` (the VM sets it itself), the façades' class path
- * `<app>/nja/classpath`.
+ * The JVM in the app's process: jdk-mobile's Zero linked into an iOS app, or a JDK's libjvm loaded on the desktop. The
+ * app's threads call it through JNI, attached on their first call. Its java.home is the VM's own (an iOS app's
+ * `<app>/lib`, the JDK's), the façades' class path the runtime directory's `classpath/`.
  */
-private object IosJvm : Transport {
-    private const val LINK_CLASS = "dev/nucleusframework/nja/server/IosLink"
+private object NativeJvm : Transport {
+    private const val LINK_CLASS = "dev/nucleusframework/nja/server/JniLink"
 
     private var vm: CPointer<JavaVMVar>? = null
     private var linkClass: jclass? = null
     private var dispatch: jmethodID? = null
 
     fun start() {
-        val bundle = NSBundle.mainBundle.bundlePath
-        val classPathDir = "$bundle/nja/classpath"
-        @Suppress("UNCHECKED_CAST")
-        val jars = (NSFileManager.defaultManager.contentsOfDirectoryAtPath(classPathDir, null) as? List<String>).orEmpty()
-            .filter { it.endsWith(".jar") }.sorted().joinToString(":") { "$classPathDir/$it" }
-        val options = listOf("-Djava.class.path=$jars") + readOptions("$bundle/nja/jvm.options")
+        val classPathDir = "${RuntimeFiles.directory}/classpath"
+        val jars = RuntimeFiles.list(classPathDir).filter { it.endsWith(".jar") }.sorted()
+            .joinToString(RuntimeFiles.classPathSeparator) { "$classPathDir/$it" }
+        val options = listOf("-Djava.class.path=$jars") + readOptions("${RuntimeFiles.directory}/jvm.options")
         memScoped {
             val vmOptions = allocArray<JavaVMOption>(options.size)
             options.forEachIndexed { i, option -> vmOptions[i].optionString = option.cstr.ptr }
@@ -135,7 +236,7 @@ private object IosJvm : Transport {
             args.nOptions = options.size
             args.options = vmOptions
             args.ignoreUnrecognized = 0u
-            val vmOut = alloc<kotlinx.cinterop.CPointerVar<JavaVMVar>>()
+            val vmOut = alloc<CPointerVar<JavaVMVar>>()
             val envOut = alloc<COpaquePointerVar>()
             val result = nja_create_java_vm(vmOut.ptr, envOut.ptr, args.ptr)
             check(result == JNI_OK) { "NJA: JNI_CreateJavaVM failed: $result" }
@@ -152,15 +253,13 @@ private object IosJvm : Transport {
             methods[0].fnPtr = staticCFunction(::upcall)
             check(fns.RegisterNatives!!(env, linkClass, methods, 1) == JNI_OK) { "NJA: can't register the upcall" }
             dispatch = fns.GetStaticMethodID!!(env, linkClass, "dispatch".cstr.ptr, "([B)[B".cstr.ptr)
-            checkException(env, "NJA: IosLink.dispatch is missing")
+            checkException(env, "NJA: JniLink.dispatch is missing")
             fns.DeleteLocalRef!!(env, local)
         }
     }
 
-    private fun readOptions(path: String): List<String> {
-        val text = NSString.stringWithContentsOfFile(path, NSUTF8StringEncoding, null) ?: return emptyList()
-        return text.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
-    }
+    private fun readOptions(path: String): List<String> =
+        RuntimeFiles.read(path).orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
 
     /** This thread's JNIEnv, attaching it (as a daemon, detached when it ends) on its first call. */
     fun env(): CPointer<JNIEnvVar> {
@@ -209,7 +308,7 @@ private fun toByteArray(env: CPointer<JNIEnvVar>, array: jbyteArray?): ByteArray
     return bytes
 }
 
-/** IosLink.upcall: the JVM calls one of the app's callbacks, on the thread of the call that passed it. */
+/** JniLink.upcall: the JVM calls one of the app's callbacks, on the thread of the call that passed it. */
 private fun upcall(env: CPointer<JNIEnvVar>?, @Suppress("UNUSED_PARAMETER") cls: jclass?, request: jbyteArray?): jbyteArray? {
     val e = env!!
     val fns = e.pointed.value!!.pointed

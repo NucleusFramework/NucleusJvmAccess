@@ -7,6 +7,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.asStableRef
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.ptr
@@ -25,6 +26,8 @@ import platform.posix.sched_yield
 import platform.posix.timespec
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.OsFamily
+import kotlin.native.Platform
 import kotlin.native.runtime.GC
 import kotlin.native.runtime.NativeRuntimeApi
 
@@ -43,7 +46,7 @@ private class Runner(val body: () -> Unit) {
     }
 }
 
-/** A pthread with a JVM-like 8 MB stack (iOS' default for secondary threads is 512 KB). */
+/** A pthread with a JVM-like 8 MB stack (iOS' and macOS' default for secondary threads is 512 KB). */
 actual class Thread actual constructor(body: () -> Unit) {
     private val runner = Runner(body)
     private val handle = nativeHeap.alloc<pthread_tVar>()
@@ -56,7 +59,7 @@ actual class Thread actual constructor(body: () -> Unit) {
         memScoped {
             val attr = alloc<pthread_attr_t>()
             pthread_attr_init(attr.ptr)
-            pthread_attr_setstacksize(attr.ptr, 8uL * 1024uL * 1024uL)
+            pthread_attr_setstacksize(attr.ptr, (8 * 1024 * 1024).convert())
             val ref = StableRef.create(runner)
             val entry = staticCFunction { arg: COpaquePointer? ->
                 val r = arg!!.asStableRef<Runner>()
@@ -90,8 +93,8 @@ actual class Thread actual constructor(body: () -> Unit) {
         actual fun sleep(millis: Long, nanos: Int) {
             memScoped {
                 val ts = alloc<timespec>()
-                ts.tv_sec = millis / 1000
-                ts.tv_nsec = (millis % 1000) * 1_000_000 + nanos
+                ts.tv_sec = (millis / 1000).convert()
+                ts.tv_nsec = ((millis % 1000) * 1_000_000 + nanos).convert()
                 nanosleep(ts.ptr, null)
             }
         }
@@ -112,6 +115,9 @@ internal actual fun platformGc() = GC.collect()
 internal actual fun platformGetenv(name: String): String? = getenv(name)?.toKString()
 
 internal actual fun hostJvmVersion(): String? = null
+
+internal actual val isDesktopNative: Boolean =
+    Platform.osFamily == OsFamily.MACOSX || Platform.osFamily == OsFamily.LINUX || Platform.osFamily == OsFamily.WINDOWS
 
 internal actual fun appFaultStorm(count: Int): Int {
     var caught = 0

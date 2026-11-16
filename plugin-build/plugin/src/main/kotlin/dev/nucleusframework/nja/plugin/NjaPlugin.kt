@@ -8,6 +8,7 @@ import dev.nucleusframework.nja.plugin.tasks.NjaAndroidRuntimeTask
 import dev.nucleusframework.nja.plugin.tasks.NjaGraalvmTask
 import dev.nucleusframework.nja.plugin.tasks.NjaJdkMobileTask
 import dev.nucleusframework.nja.plugin.tasks.NjaNativeImageTask
+import dev.nucleusframework.nja.plugin.tasks.NjaNativeLibraryTask
 import dev.nucleusframework.nja.plugin.tasks.PACKAGES_FILE
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -22,29 +23,39 @@ import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Copy
+import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.TaskProvider
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 import org.jetbrains.kotlin.gradle.plugin.mpp.Executable
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.TestExecutable
+import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
 import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
+import org.jetbrains.kotlin.konan.target.Architecture
 import org.jetbrains.kotlin.konan.target.Family
 import org.jetbrains.kotlin.konan.target.KonanTarget
 import java.io.File
 import java.util.Properties
 
-/** What runs the façades on a mobile platform. */
+/** What runs the façades on a platform of the app (a JVM target runs them in its own JVM, whatever this says). */
 enum class NjaRuntimeType {
-    /** jdk-mobile's OpenJDK: HotSpot in the app's process on Android, Zero (an interpreter) on iOS. */
-    JVM,
-
     /**
-     * The façades compiled ahead of time into a GraalVM native image (GraalVM CE, with graalvm-mobile's libraries),
-     * linked into the app. Much faster than Zero on iOS, lighter than HotSpot on Android; no FFM API on Android, and an
-     * Android image builds on Linux only. Libraries bring their reachability metadata (`META-INF/native-image`).
+     * The façades compiled ahead of time into a GraalVM native image (GraalVM CE), the default: on iOS and Android
+     * linked into the app (with graalvm-mobile's libraries), on macOS, Linux and Windows a shared library next to the
+     * executable. Much faster than Zero on iOS, lighter than HotSpot on Android, no JVM to ship on the desktop. An image
+     * builds on its own platform's host (Android's on Linux); no FFM API on Android. Libraries bring their reachability
+     * metadata (`META-INF/native-image`).
      */
     GRAALVM,
+
+    /**
+     * A JVM in the app's process: jdk-mobile's OpenJDK on mobile (HotSpot on Android, Zero, an interpreter, on iOS), a
+     * JDK's HotSpot on macOS, Linux and Windows (the app's `nja/runtime`, or `JAVA_HOME`'s).
+     */
+    JVM,
 
     /**
      * Android only: the façades on ART itself, dexed with the app, for libraries ART runs as they are (whose module
@@ -55,16 +66,28 @@ enum class NjaRuntimeType {
 
 abstract class NjaExtension(private val project: Project) {
     /**
-     * What runs the façades on iOS and Android, unless [iosRuntime] or [androidRuntime] say otherwise. JVM by default;
-     * ART applies to Android only (iOS then runs the JVM).
+     * What runs the façades on every platform, unless [iosRuntime], [androidRuntime] or [desktopRuntime] say
+     * otherwise: GRAALVM by default. ART applies to Android only (the others then run GRAALVM).
      */
     abstract val runtime: Property<NjaRuntimeType>
 
     /** What runs the façades on iOS ([runtime] by default). */
     abstract val iosRuntime: Property<NjaRuntimeType>
 
-    /** What runs the façades on Android ([runtime] by default). */
+    /**
+     * What runs the façades on Android: [runtime] by default, except on a build host other than Linux, which can't
+     * build an Android native image: the JVM there, unless set.
+     */
     abstract val androidRuntime: Property<NjaRuntimeType>
+
+    /** What runs the façades in a Kotlin/Native macOS, Linux or Windows binary ([runtime] by default). */
+    abstract val desktopRuntime: Property<NjaRuntimeType>
+
+    /**
+     * The GraalVM CE release (graalvm/graalvm-ce-builds' tag, e.g. `graal-25.5.5.0.3`) building the desktop's native images:
+     * `latest` by default. The mobile ones use the release their graalvm-mobile kit is for.
+     */
+    abstract val graalvmRelease: Property<String>
 
     /**
      * The graalvm-mobile release a native image's libraries come from: `latest` (the default) or a tag
@@ -108,9 +131,10 @@ abstract class NjaExtension(private val project: Project) {
 }
 
 /**
- * Applied to a Kotlin Multiplatform module (Android, iOS, the JVM): its common code gets the façades' proxies, and its
- * binaries the JVM: on Android HotSpot, in the app's process next to ART; on iOS Zero, linked into the app; on a JVM
- * target the app's own JVM, the façades on its class path.
+ * Applied to a Kotlin Multiplatform module (Android, iOS, macOS, Linux, Windows, the JVM): its common code gets the
+ * façades' proxies, and its binaries the runtime running them (see [NjaRuntimeType]): a GraalVM native image by default,
+ * linked into the app on mobile, next to the executable on the desktop; or a JVM in the app's process. On a JVM target
+ * the app's own JVM, the façades on its class path.
  */
 class NjaPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -119,10 +143,16 @@ class NjaPlugin : Plugin<Project> {
         extension.jvmOptions.convention(emptyList())
         extension.jdkMobileRelease.convention(NjaJdkMobileTask.LATEST)
         extension.jdkMobileRepository.convention("NucleusFramework/openjdk-mobile")
-        extension.runtime.convention(NjaRuntimeType.JVM)
-        // ART is Android's: iOS keeps the JVM then
-        extension.iosRuntime.convention(extension.runtime.map { if (it == NjaRuntimeType.ART) NjaRuntimeType.JVM else it })
-        extension.androidRuntime.convention(extension.runtime)
+        extension.runtime.convention(NjaRuntimeType.GRAALVM)
+        // ART is Android's: the others run a native image then
+        val notArt = extension.runtime.map { if (it == NjaRuntimeType.ART) NjaRuntimeType.GRAALVM else it }
+        extension.iosRuntime.convention(notArt)
+        extension.desktopRuntime.convention(notArt)
+        // An Android native image builds on Linux only: elsewhere, Android runs the JVM unless told otherwise
+        extension.androidRuntime.convention(
+            extension.runtime.map { if (it == NjaRuntimeType.GRAALVM && !isLinuxHost()) NjaRuntimeType.JVM else it },
+        )
+        extension.graalvmRelease.convention(NjaJdkMobileTask.LATEST)
         extension.graalvmMobileRelease.convention(NjaJdkMobileTask.LATEST)
         extension.graalvmMobileRepository.convention("NucleusFramework/graalvm-mobile")
         extension.nativeImageOptions.convention(emptyList())
@@ -166,8 +196,13 @@ class NjaPlugin : Plugin<Project> {
             val kotlin = project.extensions.getByType(KotlinMultiplatformExtension::class.java)
             kotlin.sourceSets.getByName("commonMain").kotlin.srcDir(clientSources.map { it.incoming.files })
             project.dependencies.add("commonMainApi", "dev.nucleusframework.nja:nja-client:$NJA_VERSION")
+            val nativeLibrary = lazy { registerNativeLibrary(project, extension, nativeImageClassPath) }
             kotlin.targets.withType(KotlinNativeTarget::class.java).configureEach {
-                if (konanTarget.family == Family.IOS) configureIos(project, extension, classPath.get(), this, jdkMobileTasks, nativeImages)
+                when (konanTarget.family) {
+                    Family.IOS -> configureIos(project, extension, classPath.get(), this, jdkMobileTasks, nativeImages)
+                    Family.OSX, Family.LINUX, Family.MINGW -> configureDesktop(project, extension, classPath.get(), this, nativeLibrary)
+                    else -> Unit
+                }
             }
             kotlin.targets.withType(KotlinJvmTarget::class.java).configureEach { configureJvm(project, this, facades, clientSources.get()) }
         }
@@ -209,6 +244,28 @@ class NjaPlugin : Plugin<Project> {
             this.classPath.from(classPath)
             options.set(extension.jvmOptions.zip(extension.nativeImageOptions) { jvm, own -> nativeImageOptions(jvm) + own })
             objectFile.set(project.layout.buildDirectory.file("nja/nativeImage/$target/nja.o"))
+        }
+    }
+
+    /** The desktop's native image: GraalVM CE for the host ([NjaExtension.graalvmRelease]), native-image's shared library. */
+    private fun registerNativeLibrary(
+        project: Project,
+        extension: NjaExtension,
+        classPath: org.gradle.api.provider.Provider<out Configuration>,
+    ): TaskProvider<NjaNativeLibraryTask> {
+        val graalvm = project.tasks.register("njaGraalvmHost", NjaGraalvmTask::class.java) {
+            description = "Downloads GraalVM CE for this host, for the desktop's native image."
+            release.set(extension.graalvmRelease)
+            cacheDir.set(project.gradle.gradleUserHomeDir.resolve("caches/nja/graalvm"))
+            offline.set(project.gradle.startParameter.isOffline)
+            homeFile.set(project.layout.buildDirectory.file("nja/graalvm/host.home"))
+        }
+        return project.tasks.register("njaNativeLibrary", NjaNativeLibraryTask::class.java) {
+            description = "Compiles the façades into a GraalVM native image for this host, a shared library."
+            graalvmHome.set(graalvm.flatMap { it.homeFile })
+            this.classPath.from(classPath)
+            options.set(extension.jvmOptions.zip(extension.nativeImageOptions) { jvm, own -> nativeImageOptions(jvm) + own })
+            libraryFile.set(project.layout.buildDirectory.file("nja/nativeLibrary/${NjaNativeLibraryTask.libraryName()}"))
         }
     }
 
@@ -424,8 +481,98 @@ class NjaPlugin : Plugin<Project> {
         }
     }
 
+    /**
+     * A Kotlin/Native macOS, Linux or Windows target: its executables find the runtime in `nja/` next to them (or in
+     * `NJA_HOME`), loaded at run time, so they link (and cross-compile) without it. A native image builds on its own
+     * platform's host only: built elsewhere, the executables get no runtime (a warning says so).
+     */
+    private fun configureDesktop(
+        project: Project,
+        extension: NjaExtension,
+        classPath: Configuration,
+        target: KotlinNativeTarget,
+        nativeLibrary: Lazy<TaskProvider<NjaNativeLibraryTask>>,
+    ) {
+        val name = target.name.replaceFirstChar { it.uppercaseChar() }
+        val graal = extension.desktopRuntime.map {
+            check(it != NjaRuntimeType.ART) { "NJA: ART is Android's: desktopRuntime is GRAALVM or JVM" }
+            it == NjaRuntimeType.GRAALVM
+        }
+        val hostTarget = isHostTarget(target.konanTarget)
+        val targetName = target.name
+        val bundle = project.tasks.register("njaDesktopBundle$name", Sync::class.java) {
+            description = "Lays out what ${target.name}'s executables load: the native image, or the JVM's class path and options."
+            into(project.layout.buildDirectory.dir("nja/desktop/${target.name}"))
+            dependsOn(graal.map { if (it && hostTarget) listOf(nativeLibrary.value) else emptyList() })
+            from(graal.map { if (it && hostTarget) listOf(nativeLibrary.value.flatMap { task -> task.libraryFile }) else emptyList<Any>() }) {
+                into("nja")
+            }
+            from(graal.map { if (it) emptyList<Any>() else listOf(classPath) }) { into("nja/classpath") }
+            val options = extension.jvmOptions
+            inputs.property("jvmOptions", options)
+            inputs.property("graal", graal)
+            doLast {
+                if (graal.get()) {
+                    if (!hostTarget) {
+                        logger.warn(
+                            "nja: $targetName's native image builds on its own platform only (not ${NjaGraalvmTask.hostPlatform()}): " +
+                                "its executables have no runtime",
+                        )
+                    }
+                } else {
+                    destinationDir.resolve("nja").mkdirs()
+                    destinationDir.resolve("nja/jvm.options").writeText(options.get().joinToString("\n"))
+                }
+            }
+        }
+        // The JVM on this host: a JDK 25 (Gradle's toolchain) runs the tests
+        val testJavaHome = project.provider {
+            project.extensions.findByType(JavaToolchainService::class.java)
+                ?.launcherFor { languageVersion.set(JavaLanguageVersion.of(JAVA_VERSION)) }?.get()?.metadata?.installationPath?.asFile?.path
+        }
+        target.binaries.configureEach {
+            val binary = this
+            if (binary !is Executable && binary !is TestExecutable) return@configureEach
+            val install = project.tasks.register("njaInstall${binary.name.replaceFirstChar { it.uppercaseChar() }}$name", Copy::class.java) {
+                from(bundle)
+                into(binary.outputDirectory)
+                // The previous runtime goes: a native image and a class path don't mix
+                val runtimeDir = binary.outputDirectory.resolve("nja")
+                doFirst { runtimeDir.deleteRecursively() }
+            }
+            binary.linkTaskProvider.configure { finalizedBy(install) }
+            if (binary is TestExecutable) {
+                project.tasks.withType(KotlinNativeTest::class.java).matching { it.name == "${target.name}Test" }.configureEach {
+                    dependsOn(install)
+                    if (!graal.get()) testJavaHome.get()?.let { environment("JAVA_HOME", it) }
+                }
+            }
+        }
+    }
+
+    private fun isHostTarget(target: KonanTarget): Boolean {
+        val os = System.getProperty("os.name").lowercase()
+        val family = when {
+            os.startsWith("mac") -> Family.OSX
+            os.startsWith("linux") -> Family.LINUX
+            os.startsWith("windows") -> Family.MINGW
+            else -> return false
+        }
+        val architecture = when (System.getProperty("os.arch")) {
+            "aarch64", "arm64" -> Architecture.ARM64
+            "x86_64", "amd64" -> Architecture.X64
+            else -> return false
+        }
+        return target.family == family && target.architecture == architecture
+    }
+
+    private fun isLinuxHost() = System.getProperty("os.name").lowercase().startsWith("linux")
+
     companion object {
         const val FACADES = "njaFacades"
+
+        /** The façades' Java version: the desktop JVM's tests run on a JDK of it. */
+        private const val JAVA_VERSION = 25
 
         /** jdk-mobile's targets, as its releases name their runtimes. */
         val JDK_MOBILE_TARGETS = listOf("android-aarch64", "android-x64", "ios-simulator-aarch64", "ios-device-aarch64")

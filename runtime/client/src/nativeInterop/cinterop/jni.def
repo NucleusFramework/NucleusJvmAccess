@@ -1,20 +1,321 @@
-# JNI (the JVM's invocation API and JNIEnv), from jdk-mobile's headers, and a GraalVM native image's entry points. The
-# runtime (jdk-mobile's JVM or the façades' native image) is linked into the app's binary by the NJA Gradle plugin; its
-# entry points are looked up at run time, so that the binary links with either.
+# JNI (the JVM's invocation API and JNIEnv), from jdk-mobile's headers, and a GraalVM native image's entry points.
+# On iOS the runtime (jdk-mobile's JVM or the façades' native image) is linked into the app's binary by the NJA Gradle
+# plugin; on macOS, Linux and Windows it is a shared library loaded at run time (the façades' native image, or a JDK's
+# libjvm). Either way its entry points are looked up at run time, so that the binary links with any of them.
 package = dev.nucleusframework.nja.jni
 headers = jni.h
 headerFilter = jni.h jni_md.h
 noStringConversion = NewStringUTF GetStringUTFChars
+# glibc declares RTLD_DEFAULT with _GNU_SOURCE
+compilerOpts.linux = -D_GNU_SOURCE
+linkerOpts.linux = -ldl -lpthread
 
 ---
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dirent.h>
 #include <dlfcn.h>
+#include <limits.h>
+#include <pthread.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 /*
- * A thread attached to the JVM detaches when it ends. Not from a pthread key destructor: Darwin frees the threads'
- * thread_local storage before those run, HotSpot's current thread with it. _tlv_atexit (what C++ thread_local
- * destructors use) runs while it is still there. No Kotlin runs at that point: plain C.
+ * The file system, with UTF-8 paths (on Windows, converted to its wide ones): where the runtime is, next to the
+ * executable. Strings returned are malloc'ed (the caller frees them).
  */
+#ifdef _WIN32
+static wchar_t* nja_wide(const char* path) {
+    int length = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    if (length <= 0) return NULL;
+    wchar_t* wide = (wchar_t*)malloc(length * sizeof(wchar_t));
+    if (wide) MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, length);
+    return wide;
+}
+
+static char* nja_utf8(const wchar_t* wide) {
+    int length = WideCharToMultiByte(CP_UTF8, 0, wide, -1, NULL, 0, NULL, NULL);
+    if (length <= 0) return NULL;
+    char* utf8 = (char*)malloc(length);
+    if (utf8) WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, length, NULL, NULL);
+    return utf8;
+}
+#endif
+
+/* The running executable's path, or NULL */
+static char* nja_executable_path(void) {
+#if defined(_WIN32)
+    wchar_t path[32768];
+    DWORD length = GetModuleFileNameW(NULL, path, 32768);
+    if (length == 0 || length >= 32768) return NULL;
+    return nja_utf8(path);
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(NULL, &size);
+    char* path = (char*)malloc(size);
+    if (!path || _NSGetExecutablePath(path, &size) != 0) { free(path); return NULL; }
+    char* real = realpath(path, NULL);
+    free(path);
+    return real;
+#else
+    return realpath("/proc/self/exe", NULL);
+#endif
+}
+
+/* 1: a file, 2: a directory, 0: nothing there */
+static int nja_file_kind(const char* path) {
+#ifdef _WIN32
+    wchar_t* wide = nja_wide(path);
+    if (!wide) return 0;
+    DWORD attributes = GetFileAttributesW(wide);
+    free(wide);
+    if (attributes == INVALID_FILE_ATTRIBUTES) return 0;
+    return (attributes & FILE_ATTRIBUTE_DIRECTORY) ? 2 : 1;
+#else
+    struct stat status;
+    if (stat(path, &status) != 0) return 0;
+    return S_ISDIR(status.st_mode) ? 2 : 1;
+#endif
+}
+
+/* A directory's entries' names, each followed by a newline; NULL if it can't be read */
+static char* nja_list_directory(const char* path) {
+    size_t capacity = 1024, length = 0;
+    char* names = (char*)malloc(capacity);
+    if (!names) return NULL;
+#ifdef _WIN32
+    size_t path_length = strlen(path);
+    char* pattern = (char*)malloc(path_length + 3);
+    if (!pattern) { free(names); return NULL; }
+    memcpy(pattern, path, path_length);
+    memcpy(pattern + path_length, "\\*", 3);
+    wchar_t* wide = nja_wide(pattern);
+    free(pattern);
+    WIN32_FIND_DATAW entry;
+    HANDLE find = wide ? FindFirstFileW(wide, &entry) : INVALID_HANDLE_VALUE;
+    free(wide);
+    if (find == INVALID_HANDLE_VALUE) { free(names); return NULL; }
+    do {
+        char* name = nja_utf8(entry.cFileName);
+        if (!name) continue;
+#else
+    DIR* directory = opendir(path);
+    if (!directory) { free(names); return NULL; }
+    struct dirent* entry;
+    while ((entry = readdir(directory)) != NULL) {
+        const char* name = entry->d_name;
+#endif
+        size_t name_length = strlen(name);
+        if (length + name_length + 2 > capacity) {
+            while (length + name_length + 2 > capacity) capacity *= 2;
+            char* grown = (char*)realloc(names, capacity);
+            if (!grown) { free(names); names = NULL; }
+            names = grown;
+        }
+        if (names) {
+            memcpy(names + length, name, name_length);
+            length += name_length;
+            names[length++] = '\n';
+        }
+#ifdef _WIN32
+        free(name);
+        if (!names) break;
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+#else
+        if (!names) break;
+    }
+    closedir(directory);
+#endif
+    if (names) names[length] = 0;
+    return names;
+}
+
+/* A file's content as a C string, or NULL */
+static char* nja_read_file(const char* path) {
+#ifdef _WIN32
+    wchar_t* wide = nja_wide(path);
+    FILE* file = wide ? _wfopen(wide, L"rb") : NULL;
+    free(wide);
+#else
+    FILE* file = fopen(path, "rb");
+#endif
+    if (!file) return NULL;
+    size_t capacity = 4096, length = 0, read;
+    char* content = (char*)malloc(capacity);
+    while (content && (read = fread(content + length, 1, capacity - length - 1, file)) > 0) {
+        length += read;
+        if (capacity - length <= 1) {
+            char* grown = (char*)realloc(content, capacity *= 2);
+            if (!grown) { free(content); content = NULL; }
+            content = grown;
+        }
+    }
+    fclose(file);
+    if (content) content[length] = 0;
+    return content;
+}
+
+/* An environment variable (UTF-8), or NULL */
+static char* nja_getenv(const char* name) {
+#ifdef _WIN32
+    wchar_t* wide_name = nja_wide(name);
+    if (!wide_name) return NULL;
+    wchar_t value[32768];
+    DWORD length = GetEnvironmentVariableW(wide_name, value, 32768);
+    free(wide_name);
+    if (length == 0 || length >= 32768) return NULL;
+    return nja_utf8(value);
+#else
+    const char* value = getenv(name);
+    return value ? strdup(value) : NULL;
+#endif
+}
+
+/* The shared library holding the runtime, once loaded (NULL: the runtime is linked into the binary, as on iOS) */
+static void* nja_runtime;
+
+/* Loads the runtime's shared library; [dependencies]: a directory its own dependencies are in, or NULL. NULL on
+ * success, else the reason (static) */
+static const char* nja_load_runtime(const char* path, const char* dependencies) {
+#ifdef _WIN32
+    if (dependencies) {
+        wchar_t* directory = nja_wide(dependencies);
+        if (directory) AddDllDirectory(directory);
+        free(directory);
+    }
+    wchar_t* wide = nja_wide(path);
+    HMODULE module = wide ? LoadLibraryExW(wide, NULL, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR) : NULL;
+    free(wide);
+    if (!module) {
+        static char reason[64];
+        snprintf(reason, sizeof reason, "LoadLibrary failed, error %lu", GetLastError());
+        return reason;
+    }
+    nja_runtime = module;
+    return NULL;
+#else
+    (void)dependencies;
+    void* handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!handle) return dlerror();
+    nja_runtime = handle;
+    return NULL;
+#endif
+}
+
+/* A symbol of the runtime: in its shared library once loaded, else in the process (linked in) */
+static void* nja_symbol(const char* name) {
+#ifdef _WIN32
+    HMODULE module = nja_runtime ? (HMODULE)nja_runtime : GetModuleHandleW(NULL);
+    return (void*)GetProcAddress(module, name);
+#else
+    return dlsym(nja_runtime ? nja_runtime : RTLD_DEFAULT, name);
+#endif
+}
+
+/*
+ * Runs [function] when the calling thread exits, while its thread-local storage is still there: the runtime's current
+ * thread lives in it. Darwin: _tlv_atexit (what C++ thread_local destructors use; Darwin frees the thread_local
+ * storage before pthread key destructors run). Linux: glibc's __cxa_thread_atexit_impl, the same. Windows: a fiber
+ * local storage callback, skipped once the process exits (the runtime goes with it). No Kotlin runs at that point.
+ */
+#if defined(__APPLE__)
 extern void _tlv_atexit(void (*function)(void*), void* argument);
+static void nja_at_thread_exit(void (*function)(void*), void* argument) { _tlv_atexit(function, argument); }
+#elif defined(_WIN32)
+typedef struct nja_exit_hook { void (*function)(void*); void* argument; struct nja_exit_hook* next; } nja_exit_hook;
+static DWORD nja_exit_slot = FLS_OUT_OF_INDEXES;
+static volatile LONG nja_process_exiting;
+
+static void nja_mark_exiting(void) { nja_process_exiting = 1; }
+
+static void WINAPI nja_run_exit_hooks(void* hooks) {
+    for (nja_exit_hook* hook = (nja_exit_hook*)hooks; hook;) {
+        nja_exit_hook* next = hook->next;
+        if (!nja_process_exiting) hook->function(hook->argument);
+        free(hook);
+        hook = next;
+    }
+}
+
+static INIT_ONCE nja_exit_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK nja_init_exit_slot(PINIT_ONCE once, void* parameter, void** context) {
+    (void)once; (void)parameter; (void)context;
+    nja_exit_slot = FlsAlloc(nja_run_exit_hooks);
+    atexit(nja_mark_exiting);
+    return TRUE;
+}
+
+static void nja_at_thread_exit(void (*function)(void*), void* argument) {
+    InitOnceExecuteOnce(&nja_exit_once, nja_init_exit_slot, NULL, NULL);
+    if (nja_exit_slot == FLS_OUT_OF_INDEXES) return;
+    nja_exit_hook* hook = (nja_exit_hook*)malloc(sizeof(nja_exit_hook));
+    if (!hook) return;
+    hook->function = function;
+    hook->argument = argument;
+    hook->next = (nja_exit_hook*)FlsGetValue(nja_exit_slot);
+    FlsSetValue(nja_exit_slot, hook);
+}
+#else
+extern int __cxa_thread_atexit_impl(void (*function)(void*), void* argument, void* dso);
+extern void* __dso_handle;
+static void nja_at_thread_exit(void (*function)(void*), void* argument) {
+    __cxa_thread_atexit_impl(function, argument, &__dso_handle);
+}
+#endif
+
+/* A recursive lock (the runtime's few shared structures) */
+static void* nja_lock_new(void) {
+#ifdef _WIN32
+    CRITICAL_SECTION* lock = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
+    if (lock) InitializeCriticalSection(lock);
+#else
+    pthread_mutex_t* lock = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+    if (lock) {
+        pthread_mutexattr_t attributes;
+        pthread_mutexattr_init(&attributes);
+        pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(lock, &attributes);
+        pthread_mutexattr_destroy(&attributes);
+    }
+#endif
+    return lock;
+}
+
+static void nja_lock_lock(void* lock) {
+#ifdef _WIN32
+    EnterCriticalSection((CRITICAL_SECTION*)lock);
+#else
+    pthread_mutex_lock((pthread_mutex_t*)lock);
+#endif
+}
+
+static void nja_lock_unlock(void* lock) {
+#ifdef _WIN32
+    LeaveCriticalSection((CRITICAL_SECTION*)lock);
+#else
+    pthread_mutex_unlock((pthread_mutex_t*)lock);
+#endif
+}
+
+static void nja_lock_free(void* lock) {
+#ifdef _WIN32
+    DeleteCriticalSection((CRITICAL_SECTION*)lock);
+#else
+    pthread_mutex_destroy((pthread_mutex_t*)lock);
+#endif
+    free(lock);
+}
 
 static void nja_detach(void* vm) {
     JavaVM* jvm = (JavaVM*)vm;
@@ -27,65 +328,80 @@ static JNIEnv* nja_attach_current_thread(JavaVM* vm, const char* name) {
     if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_21) == JNI_OK) return env;
     JavaVMAttachArgs args = {JNI_VERSION_21, (char*)name, NULL};
     if ((*vm)->AttachCurrentThreadAsDaemon(vm, (void**)&env, &args) != JNI_OK) return NULL;
-    _tlv_atexit(nja_detach, vm);
+    nja_at_thread_exit(nja_detach, vm);
     return env;
 }
 
-typedef jint (*nja_create_vm_fn)(JavaVM**, void**, void*);
+typedef jint (JNICALL *nja_create_vm_fn)(JavaVM**, void**, void*);
 
-/* JNI_CreateJavaVM, when the JVM is linked in; JNI_ERR otherwise */
+/* JNI_CreateJavaVM, when the JVM is linked in or loaded; JNI_ERR otherwise */
 static jint nja_create_java_vm(JavaVM** vm, void** env, void* args) {
-    nja_create_vm_fn create = (nja_create_vm_fn)dlsym(RTLD_DEFAULT, "JNI_CreateJavaVM");
+    nja_create_vm_fn create = (nja_create_vm_fn)nja_symbol("JNI_CreateJavaVM");
     return create ? create(vm, env, args) : JNI_ERR;
 }
 
-/* A GraalVM native image (graal_isolate.h's API and NJA's entry points), when one is linked in */
+/* A GraalVM native image (graal_isolate.h's API and NJA's entry points), when one is linked in or loaded */
 typedef int (*nja_graal_create_isolate_fn)(void*, void**, void**);
 typedef int (*nja_graal_attach_thread_fn)(void*, void**);
 typedef void* (*nja_graal_get_current_thread_fn)(void*);
 typedef int (*nja_graal_detach_thread_fn)(void*);
 typedef void* (*nja_graal_dispatch_fn)(void*, const void*, int, int*);
-typedef void (*nja_graal_set_upcall_fn)(void*, void*);
+typedef void (*nja_graal_free_fn)(void*, void*);
+typedef void (*nja_graal_set_upcall_fn)(void*, void*, void*);
 
 static void* nja_graal_isolate;
 static nja_graal_dispatch_fn nja_graal_dispatch_entry;
+static nja_graal_free_fn nja_graal_free_entry;
+static nja_graal_get_current_thread_fn nja_graal_current_entry;
+static nja_graal_attach_thread_fn nja_graal_attach_entry;
+static nja_graal_detach_thread_fn nja_graal_detach_entry;
 
 static int nja_graal_available(void) {
-    return dlsym(RTLD_DEFAULT, "nja_graal_dispatch") != NULL;
+    return nja_symbol("nja_graal_dispatch") != NULL;
 }
 
 static void nja_graal_detach(void* thread) {
-    nja_graal_detach_thread_fn detach = (nja_graal_detach_thread_fn)dlsym(RTLD_DEFAULT, "graal_detach_thread");
-    if (detach) detach(thread);
+    if (nja_graal_detach_entry) nja_graal_detach_entry(thread);
 }
 
 /* The calling thread's isolate thread, attaching it (detached when it exits) on its first call; NULL on failure */
 static void* nja_graal_thread(void) {
-    nja_graal_get_current_thread_fn current = (nja_graal_get_current_thread_fn)dlsym(RTLD_DEFAULT, "graal_get_current_thread");
-    void* thread = current(nja_graal_isolate);
+    void* thread = nja_graal_current_entry(nja_graal_isolate);
     if (thread) return thread;
-    nja_graal_attach_thread_fn attach = (nja_graal_attach_thread_fn)dlsym(RTLD_DEFAULT, "graal_attach_thread");
-    if (attach(nja_graal_isolate, &thread) != 0) return NULL;
-    _tlv_atexit(nja_graal_detach, thread);
+    if (nja_graal_attach_entry(nja_graal_isolate, &thread) != 0) return NULL;
+    nja_at_thread_exit(nja_graal_detach, thread);
     return thread;
 }
 
+/* The app's buffers (its callbacks' answers) are freed by its own C library: on Windows, the image has another */
+static void nja_graal_release(void* buffer) { free(buffer); }
+
 /* Creates the isolate (the calling thread attached to it) and gives it the app's callback entry; 0 on success */
 static int nja_graal_start(void* upcall) {
-    nja_graal_create_isolate_fn create = (nja_graal_create_isolate_fn)dlsym(RTLD_DEFAULT, "graal_create_isolate");
-    nja_graal_set_upcall_fn set_upcall = (nja_graal_set_upcall_fn)dlsym(RTLD_DEFAULT, "nja_graal_set_upcall");
-    nja_graal_dispatch_entry = (nja_graal_dispatch_fn)dlsym(RTLD_DEFAULT, "nja_graal_dispatch");
-    if (!create || !set_upcall || !nja_graal_dispatch_entry) return -1;
+    nja_graal_create_isolate_fn create = (nja_graal_create_isolate_fn)nja_symbol("graal_create_isolate");
+    nja_graal_set_upcall_fn set_upcall = (nja_graal_set_upcall_fn)nja_symbol("nja_graal_set_upcall");
+    nja_graal_dispatch_entry = (nja_graal_dispatch_fn)nja_symbol("nja_graal_dispatch");
+    nja_graal_free_entry = (nja_graal_free_fn)nja_symbol("nja_graal_free");
+    nja_graal_current_entry = (nja_graal_get_current_thread_fn)nja_symbol("graal_get_current_thread");
+    nja_graal_attach_entry = (nja_graal_attach_thread_fn)nja_symbol("graal_attach_thread");
+    nja_graal_detach_entry = (nja_graal_detach_thread_fn)nja_symbol("graal_detach_thread");
+    if (!create || !set_upcall || !nja_graal_dispatch_entry || !nja_graal_free_entry || !nja_graal_current_entry || !nja_graal_attach_entry) return -1;
     void* thread = NULL;
     int result = create(NULL, &nja_graal_isolate, &thread);
     if (result != 0) return result;
-    set_upcall(thread, upcall);
+    set_upcall(thread, upcall, (void*)nja_graal_release);
     return 0;
 }
 
-/* Serves a call on the calling thread: the reply (to free), its length in reply_length; NULL if it can't attach */
+/* Serves a call on the calling thread: the reply (to free with nja_graal_free_reply), its length in reply_length;
+ * NULL if it can't attach */
 static void* nja_graal_call(const void* message, int length, int* reply_length) {
     void* thread = nja_graal_thread();
     if (!thread) return NULL;
     return nja_graal_dispatch_entry(thread, message, length, reply_length);
+}
+
+/* Frees a reply of the image, with the image's own C library */
+static void nja_graal_free_reply(void* reply) {
+    nja_graal_free_entry(nja_graal_current_entry(nja_graal_isolate), reply);
 }

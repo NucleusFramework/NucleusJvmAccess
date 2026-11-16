@@ -23,7 +23,7 @@ extern int graal_attach_thread(graal_isolate_t* isolate, graal_isolatethread_t**
 extern graal_isolatethread_t* graal_get_current_thread(graal_isolate_t* isolate);
 extern int graal_detach_thread(graal_isolatethread_t* thread);
 extern void* nja_graal_dispatch(graal_isolatethread_t* thread, const void* message, int length, int* reply_length);
-extern void nja_graal_set_upcall(graal_isolatethread_t* thread, void* upcall);
+extern void nja_graal_set_upcall(graal_isolatethread_t* thread, void* upcall, void* release);
 
 static JavaVM* art_vm;
 static jclass jvm_class;      // AndroidJvm
@@ -70,6 +70,11 @@ static void* upcall(const void* request, int length, int* answer_length) {
     return buffer;
 }
 
+// Frees an answer of upcall (the image and this library share bionic's malloc: its replies are freed with free too)
+static void release(void* buffer) {
+    free(buffer);
+}
+
 // AndroidJvm.start: creates the isolate (once); its arguments are the JVM's, unused. Null, or the error.
 static jstring JNICALL art_start(JNIEnv* env, jclass cls, jstring java_home, jstring class_path, jstring link_class,
                                  jobjectArray options) {
@@ -85,7 +90,7 @@ static jstring JNICALL art_start(JNIEnv* env, jclass cls, jstring java_home, jst
             return (*env)->NewStringUTF(env, error);
         }
         pthread_setspecific(thread_key, thread);
-        nja_graal_set_upcall(thread, (void*)upcall);
+        nja_graal_set_upcall(thread, (void*)upcall, (void*)release);
     }
     pthread_mutex_unlock(&start_lock);
     return NULL;

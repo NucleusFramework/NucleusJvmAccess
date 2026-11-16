@@ -36,6 +36,9 @@ internal expect fun platformGetenv(name: String): String?
 /** On a JVM target, the version of the JVM the tests (and so the façades) run in; on the mobile ones, null (jdk-mobile). */
 internal expect fun hostJvmVersion(): String?
 
+/** Kotlin/Native on macOS, Linux or Windows: the JVM runtime is a JDK's HotSpot. */
+internal expect val isDesktopNative: Boolean
+
 object System {
     private val origin = TimeSource.Monotonic.markNow()
 
