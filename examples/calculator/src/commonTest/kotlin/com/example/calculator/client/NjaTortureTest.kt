@@ -29,7 +29,7 @@ import kotlin.time.TimeSource
 class NjaTortureTest {
     private val jvm = JvmTorture()
 
-    private val isAndroid = jvm.vm().name.contains("Server")
+    private val isAndroid = !isDesktopNative && jvm.vm().name.contains("Server")
 
     @Test
     fun `the JVM is the expected one`() {
@@ -42,6 +42,10 @@ class NjaTortureTest {
         } else if (vm.name.contains("Substrate")) {
             // A GraalVM native image (GraalVM CE 25)
             assertTrue(vm.version.startsWith("25"), "$vm")
+        } else if (isDesktopNative) {
+            // A JDK's HotSpot (the façades' Java 25 or later)
+            assertTrue(vm.version.substringBefore('.').toInt() >= 25, "$vm")
+            assertTrue(vm.name.contains("Server"), "$vm")
         } else if (!vm.name.contains("Dalvik")) {
             // jdk-mobile's JVM (on ART, the façades run as they are)
             assertTrue(vm.version.startsWith("27"), "$vm")

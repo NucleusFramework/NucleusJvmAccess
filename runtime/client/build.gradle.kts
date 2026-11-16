@@ -23,7 +23,14 @@ kotlin {
     jvm()
     jvmToolchain(25)
 
-    listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
+    // Kotlin/Native: iOS (the runtime linked into the app), macOS, Linux and Windows (the runtime loaded next to the
+    // executable): one JNI and native image transport for all (nativeMain)
+    listOf(
+        iosArm64(), iosSimulatorArm64(),
+        macosArm64(), macosX64(),
+        linuxX64(), linuxArm64(),
+        mingwX64(),
+    ).forEach { target ->
         target.compilations.getByName("main").cinterops.create("jni") {
             definitionFile.set(project.file("src/nativeInterop/cinterop/jni.def"))
             includeDirs(project.file("src/nativeInterop/cinterop/include"))
@@ -51,7 +58,7 @@ mavenPublishing {
     coordinates("dev.nucleusframework.nja", project.name, project.version.toString())
     pom {
         name.set("Nucleus JVM Access client")
-        description.set("The part of Nucleus JVM Access running in the app (Android, iOS, the JVM): starts the JVM and calls the façades")
+        description.set("The part of Nucleus JVM Access running in the app (Android, iOS, macOS, Linux, Windows, the JVM): starts the runtime and calls the façades")
         url.set("https://github.com/NucleusFramework/NucleusJvmAccess")
         licenses {
             license {

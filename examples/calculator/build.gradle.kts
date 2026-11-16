@@ -16,6 +16,12 @@ kotlin {
     }
     iosSimulatorArm64()
     iosArm64()
+    // Kotlin/Native on the desktop: the same suites, the runtime next to the test executable
+    macosArm64()
+    macosX64()
+    linuxX64()
+    linuxArm64()
+    mingwX64()
     // The desktop: the façades in this JVM, the same suites
     jvm()
 
@@ -43,7 +49,7 @@ nucleusJvm {
     // A second façade in the same JVM: NJA's own stress tests
     facade(project(":examples:torture-facade"))
     jvmOptions.addAll("-Xss2m", "-Xmx512m")
-    // The same suites on a GraalVM native image: -Pnja.runtime=GRAALVM
+    // The same suites on a JVM (jdk-mobile's on iOS and Android, a JDK's on the desktop): -Pnja.runtime=JVM
     providers.gradleProperty("nja.runtime").orNull?.let { runtime.set(dev.nucleusframework.nja.plugin.NjaRuntimeType.valueOf(it)) }
     // -Pnja.androidAbis=arm64-v8a,x86_64
     providers.gradleProperty("nja.androidAbis").orNull?.let { androidAbis.set(it.split(',').toSet()) }

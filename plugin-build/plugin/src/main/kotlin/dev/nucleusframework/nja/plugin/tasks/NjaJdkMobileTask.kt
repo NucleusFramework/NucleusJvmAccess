@@ -12,10 +12,8 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.work.DisableCachingByDefault
 import java.io.File
-import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
-import java.util.Properties
 import javax.inject.Inject
 
 /**
@@ -50,7 +48,7 @@ abstract class NjaJdkMobileTask : DefaultTask() {
     @TaskAction
     fun stage() {
         val repo = repository.get()
-        val tag = resolve(repo, release.get())
+        val tag = GitHubReleases.resolve(repo, release.get(), cacheDir.get().asFile, offline.get(), logger)
         val asset = assetName(product.get(), tag, target.get())
         val out = outputDir.get().asFile
         val marker = File(out, ".nja-release")
@@ -71,44 +69,6 @@ abstract class NjaJdkMobileTask : DefaultTask() {
     // The sync's permissions drop the archive's own: its tools (graalvm-mobile's bin/android-cc) must stay executable
     private fun keepToolsExecutable(out: File) {
         File(out, "bin").listFiles()?.forEach { it.setExecutable(true) }
-    }
-
-    private fun resolve(repo: String, release: String): String {
-        if (release != LATEST) return release
-        val cache = File(cacheDir.get().asFile, "latest-${repo.replace('/', '_')}.properties")
-        val known = Properties().apply { if (cache.isFile) cache.reader().use { load(it) } }
-        val knownTag = known.getProperty("tag")
-        val fresh = System.currentTimeMillis() - (known.getProperty("at")?.toLongOrNull() ?: 0L) < DAY_MILLIS
-        if (knownTag != null && (fresh || offline.get())) return knownTag
-        if (offline.get()) throw GradleException("NJA: offline, and $repo's latest release was never resolved")
-        val tag = try {
-            latestTag(repo)
-        } catch (e: Exception) {
-            // The network down: the last one resolved, if any
-            knownTag?.also { logger.warn("nja: can't resolve $repo's latest release (${e.message}), using $it") } ?: throw e
-        }
-        cache.parentFile.mkdirs()
-        Properties().apply {
-            setProperty("tag", tag)
-            setProperty("at", System.currentTimeMillis().toString())
-            cache.writer().use { store(it, null) }
-        }
-        return tag
-    }
-
-    // github.com/<repo>/releases/latest redirects to .../releases/tag/<tag>
-    private fun latestTag(repo: String): String {
-        val connection = URI("https://github.com/$repo/releases/latest").toURL().openConnection() as HttpURLConnection
-        connection.instanceFollowRedirects = false
-        connection.requestMethod = "HEAD"
-        try {
-            val location = connection.getHeaderField("Location")
-                ?: throw GradleException("NJA: no latest release of $repo (HTTP ${connection.responseCode})")
-            return location.substringAfterLast("/releases/tag/").takeIf { it != location && it.isNotEmpty() }
-                ?: throw GradleException("NJA: unexpected latest release of $repo: $location")
-        } finally {
-            connection.disconnect()
-        }
     }
 
     // In Gradle's cache, by release: checked against the .sha256 published with it
@@ -153,7 +113,6 @@ abstract class NjaJdkMobileTask : DefaultTask() {
         const val LATEST = "latest"
         const val JDK_MOBILE = "jdk-mobile"
         const val GRAALVM_MOBILE = "graalvm-mobile"
-        private const val DAY_MILLIS = 24L * 60 * 60 * 1000
 
         /** <product>-<version>b<build>.<revision> -> <product>-<version>-<target>-b<build>.<revision>.tar.gz */
         fun assetName(product: String, tag: String, target: String): String {

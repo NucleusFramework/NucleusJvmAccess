@@ -1,0 +1,41 @@
+name: Kotlin/Native desktop
+
+# The example's suites in Kotlin/Native executables on macOS, Linux and Windows, each on its own host (a native image
+# builds on its own platform): with the façades in a GraalVM native image (the default) and in a JDK's JVM
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - { os: macos-15, target: macosArm64 }
+          - { os: ubuntu-latest, target: linuxX64 }
+          - { os: ubuntu-24.04-arm, target: linuxArm64 }
+          - { os: windows-latest, target: mingwX64 }
+        runtime: [GRAALVM, JVM]
+    runs-on: ${{ matrix.host.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v4
+      # native-image's C toolchain on Windows: Visual Studio's
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Tests
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew :examples:calculator:${{ matrix.host.target }}Test -Pnja.runtime=${{ matrix.runtime }} --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-${{ matrix.host.target }}-${{ matrix.runtime }}
+          path: examples/calculator/build/reports/tests/**

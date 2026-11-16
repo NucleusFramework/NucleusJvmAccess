@@ -1,13 +1,13 @@
 package dev.nucleusframework.nja.server;
 
 /**
- * iOS: the JVM runs in the app's process and its threads (Kotlin/Native ones, attached to it), so calls and callbacks
- * are plain JNI calls on the calling thread.
+ * Kotlin/Native (iOS, macOS, Linux, Windows): the JVM runs in the app's process and its threads (Kotlin/Native ones,
+ * attached to it), so calls and callbacks are plain JNI calls on the calling thread.
  */
-public final class IosLink {
-    private IosLink() {}
+public final class JniLink {
+    private JniLink() {}
 
-    private static final Link LINK = IosLink::upcall;
+    private static final Link LINK = JniLink::upcall;
 
     /** Serves a call of the app. */
     static byte[] dispatch(byte[] message) {
