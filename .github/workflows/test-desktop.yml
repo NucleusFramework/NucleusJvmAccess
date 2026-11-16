@@ -1,7 +1,8 @@
 name: Kotlin/Native desktop
 
 # The example's suites in Kotlin/Native executables on macOS, Linux and Windows, each on its own host (a native image
-# builds on its own platform): with the façades in a GraalVM native image (the default) and in a JDK's JVM
+# builds on its own platform): with the façades in a GraalVM native image (the default) and in a JDK's JVM. Kotlin/Native
+# doesn't run on Linux arm64 hosts: linuxArm64's test executable is linked on Linux x64, not run
 on:
   pull_request:
   workflow_dispatch:
@@ -13,8 +14,7 @@ jobs:
       matrix:
         host:
           - { os: macos-15, target: macosArm64 }
-          - { os: ubuntu-latest, target: linuxX64 }
-          - { os: ubuntu-24.04-arm, target: linuxArm64 }
+          - { os: ubuntu-latest, target: linuxX64, also: linkDebugTestLinuxArm64 }
           - { os: windows-latest, target: mingwX64 }
         runtime: [GRAALVM, JVM]
     runs-on: ${{ matrix.host.os }}
@@ -33,7 +33,7 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ./gradlew :examples:calculator:${{ matrix.host.target }}Test -Pnja.runtime=${{ matrix.runtime }} --stacktrace
+        run: ./gradlew :examples:calculator:${{ matrix.host.target }}Test ${{ matrix.host.also && format(':examples:calculator:{0}', matrix.host.also) || '' }} -Pnja.runtime=${{ matrix.runtime }} --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
         with:

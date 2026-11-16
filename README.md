@@ -154,6 +154,9 @@ runtime: they load it when the app first calls a façade, from the `nja` directo
 - **Cross-compiling**: Kotlin/Native builds Linux and Windows binaries on macOS, but native-image builds for its own
   host only. An executable built for another platform gets no native image (a warning says so). Build it on its own OS,
   or ship the library built there in its `nja/`.
+- **Linux arm64**: Kotlin/Native doesn't run on Linux arm64 hosts, so `linuxArm64` binaries are always cross-compiled.
+  With `GRAALVM`, build the native image on a Linux arm64 machine (`native-image --shared` of the façades' class path,
+  as `njaNativeLibrary` does) and ship it in `nja/`; the `JVM` runtime needs nothing built there.
 - **The JVM's tests** run on Gradle's Java 25 toolchain (their `JAVA_HOME`).
 - **Shipping**: copy `nja/` next to the app's executable, or set `NJA_HOME`. A shared library or framework the app
   links finds `nja/` next to the executable that loaded it.

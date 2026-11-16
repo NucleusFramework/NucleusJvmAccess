@@ -71,7 +71,8 @@ class PsiSourceParser {
             // Phase 1: prescan type declarations (reused as long as the content is unchanged)
             val entries = sources.distinctBy { it.file.absoluteFile }.map { source ->
                 val key = source.file.absolutePath
-                val text = source.file.readText()
+                // PSI wants \n: a Windows checkout's sources have \r\n
+                val text = source.file.readText().replace("\r\n", "\n")
                 val hash = sha256(text.toByteArray())
                 val cached = previous[key]?.takeIf { it.contentHash == hash && it.isCommon == source.isCommon }
                 Entry(source, key, text, hash, cached, cached?.prescan ?: prescan(psi.parse(source.file, text)))
