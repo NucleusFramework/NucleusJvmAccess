@@ -17,6 +17,7 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.work.DisableCachingByDefault
 import org.gradle.process.ExecOperations
 import java.io.File
+import java.util.Properties
 import javax.inject.Inject
 
 /**
@@ -111,13 +112,24 @@ abstract class NjaAndroidLinkTask : DefaultTask() {
                 listOf(
                     bin.resolve("${triple(abi)}$API-clang++").path, "-shared", "-fPIC", "-O2", "-Wall",
                     "-x", "c", "-std=c11", nativeImageBridgeSource.get().asFile.path, "-x", "none", image.path, "-o", target.path,
-                ) + archives.map { it.path } + listOf(
+                ) + archives.map { it.path } + kitWraps(kit) + listOf(
                     "-Wl,-Bsymbolic", "-Wl,-z,max-page-size=16384", "-Wl,-z,noexecstack", "-Wl,--no-undefined",
                     "-static-libstdc++", "-lz", "-ldl", "-llog", "-lm",
                 ),
             )
         }
         exec.exec { commandLine(bin.resolve("llvm-strip").path, "--strip-debug", target.path) }
+    }
+
+    /**
+     * The symbols the kit's link wraps (`-Wl,--wrap=<name>`, from its `link.flags`): glibc's calls its glibc_compat
+     * translates for bionic (the resolver's struct addrinfo). Kits without them (up to b1.2) wrap nothing.
+     */
+    private fun kitWraps(kit: File): List<String> {
+        val file = kit.resolve(NjaGraalvmTask.KIT_PROPERTIES)
+        if (!file.isFile) return emptyList()
+        val properties = Properties().apply { file.reader().use { load(it) } }
+        return properties.getProperty("link.flags").orEmpty().split(' ').filter { it.startsWith("-Wl,--wrap=") }
     }
 
     private fun triple(abi: String) = when (abi) {
