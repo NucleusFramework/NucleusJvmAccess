@@ -112,7 +112,7 @@ time.
 
 ```kotlin
 nucleusJvm {
-    graalvmMobileRelease = "graalvm-mobile-25.4.4.1.1b1.2"  // mobile: graalvm-mobile's kit (default: latest)
+    graalvmMobileRelease = "graalvm-mobile-25.5.5.0.3b1.2"  // mobile: graalvm-mobile's kit (default: latest)
     graalvmRelease = "graal-25.5.5.0.3"                   // desktop: GraalVM CE's release (default: latest)
     nativeImageOptions.add("-H:+ReportExceptionStackTraces")
 }
@@ -136,7 +136,7 @@ nucleusJvm {
   builds on Linux only (a CI runner, a Linux container). native-image also runs small C programs for the target: on a
   Linux host of another architecture (arm64 images on x64), they run through qemu-user (`qemu-user-static` with binfmt).
   The kit's Linux libraries are built against glibc: its `libglibc_compat.a` adapts them to bionic, including the
-  resolver's `struct addrinfo` (in kits released after `b1.2`: with earlier ones, `InetAddress` lookups crash).
+  resolver's `struct addrinfo` (from `graalvm-mobile-25.5.5.0.3b1.2`: with earlier kits, `InetAddress` lookups crash).
 - **Virtual threads**: `StackValue` throws on a virtual thread. In code virtual threads may run, pass native memory
   through `UnmanagedMemory` or pinned arrays.
 
