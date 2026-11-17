@@ -1,8 +1,7 @@
 # Nucleus JVM Access
 
-> [!WARNING]
-> **Highly experimental.** This project is a proof of concept: its APIs, its Gradle plugins and the runtimes it relies
-> on can change at any time, and it may not be maintained. Don't depend on it for production apps.
+> [!NOTE]
+> Pre-1.0: the APIs and the Gradle plugins' DSL can still change between minor versions.
 
 Use **Java libraries from Kotlin Multiplatform apps** (iOS, Android, macOS, Linux, Windows) **in the app's own
 process**. By default the libraries are compiled ahead of time into a **GraalVM native image**. A real JVM can run them
